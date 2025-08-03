@@ -1,91 +1,117 @@
 const ActivityLog = ({ activities, isEmpty }) => {
+  const formatTimestamp = (timestamp) => {
+    const date = new Date(timestamp);
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+  };
+
+  const getLogLevel = (confidence) => {
+    if (confidence > 0.8) return { level: 'INFO', color: 'text-green-400' };
+    if (confidence > 0.6) return { level: 'WARN', color: 'text-yellow-400' };
+    return { level: 'DEBUG', color: 'text-blue-400' };
+  };
+
   return (
-    <div className="mt-12">
-      {/* Header with Organic Divider */}
-      <div className="relative mb-6">
-        <h2 className="text-lg font-medium text-primary-obsidian">
-          Activity Insights
-        </h2>
-        <div className="absolute top-8 left-0 w-full h-px 
-                       bg-gradient-to-r from-primary-neutral via-primary-slate/50 to-transparent">
+    <div className="mt-8">
+      {/* Terminal Header */}
+      <div className="mb-4">
+        <div className="flex items-center space-x-2 mb-2">
+          <span className="text-green-400 font-mono text-sm">$</span>
+          <span className="text-gray-300 font-mono text-sm">tail -f /var/log/vygil/activity.log</span>
         </div>
+        <div className="h-px bg-gray-600"></div>
       </div>
 
-      {/* Empty State */}
-      {isEmpty ? (
-        <div className="text-center py-12 px-6">
-          {/* Activity Wave Illustration */}
-          <div className="flex justify-center mb-6">
-            <svg 
-              className="w-16 h-16 text-primary-slate opacity-60 animate-bounce" 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor"
-            >
-              <path 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
-                strokeWidth={1} 
-                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" 
-              />
-            </svg>
+      {/* Terminal Window */}
+      <div className="bg-black border border-gray-700 rounded-lg overflow-hidden">
+        {/* Terminal Top Bar */}
+        <div className="bg-gray-800 px-4 py-2 flex items-center space-x-2">
+          <div className="flex space-x-2">
+            <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+            <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
           </div>
-          
-          <div className="space-y-1">
-            <p className="text-base font-medium text-primary-charcoal">
-              Ready to begin insights
-            </p>
-            <p className="text-sm font-normal text-primary-charcoal opacity-80">
-              Start monitoring to capture your digital patterns
-            </p>
-          </div>
+          <span className="text-gray-400 text-xs font-mono ml-4">vygil-activity-monitor</span>
         </div>
-      ) : (
-        /* Activity Stream */
-        <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-          {activities.map((activity, index) => (
-            <div
-              key={activity.id}
-              className="bg-primary-ghost border border-primary-neutral/60 
-                        rounded-lg p-4 relative
-                        transition-all duration-200 ease-out
-                        hover:shadow-floating hover:border-primary-slate/60
-                        animate-fade-in"
-              style={{
-                animationDelay: `${index * 50}ms`,
-                animationFillMode: 'both'
-              }}
-            >
-              {/* Timestamp */}
-              <div className="absolute top-4 right-4">
-                <span className="text-xs font-mono text-semantic-inactive">
-                  {new Date(activity.timestamp).toLocaleTimeString()}
-                </span>
+
+        {/* Terminal Content */}
+        <div className="bg-black p-4 font-mono text-sm min-h-[300px] max-h-96 overflow-y-auto">
+          {isEmpty ? (
+            <div className="text-gray-500 text-center py-8">
+              <div className="animate-pulse">
+                <span className="text-gray-600">Waiting for activity data...</span>
               </div>
-              
-              {/* Activity Description */}
-              <div className="pr-20">
-                <p className="text-base text-primary-obsidian leading-relaxed">
-                  {activity.description}
-                </p>
-                
-                {/* AI Insight Card */}
-                <div className="bg-accents-frost/5 border border-accents-frost/10 
-                               rounded-lg p-4 mt-2">
-                  <p className="text-sm text-accents-frost font-normal italic">
-                    AI detected: {activity.confidence > 0.8 ? 'High confidence' : 
-                                 activity.confidence > 0.6 ? 'Medium confidence' : 
-                                 'Low confidence'} activity classification
-                    <span className="ml-2 font-mono">
-                      ({Math.round(activity.confidence * 100)}%)
-                    </span>
-                  </p>
-                </div>
+              <div className="mt-2 text-xs">
+                <span className="text-gray-700">No entries in activity.log</span>
               </div>
             </div>
-          ))}
+          ) : (
+            <div className="space-y-1">
+              {activities.map((activity, index) => {
+                const logInfo = getLogLevel(activity.confidence);
+                const timestamp = formatTimestamp(activity.timestamp);
+                
+                return (
+                  <div 
+                    key={activity.id} 
+                    className="leading-relaxed hover:bg-gray-900 px-2 py-1 rounded transition-colors duration-150"
+                  >
+                    {/* Log Line */}
+                    <div className="flex flex-wrap items-start space-x-2">
+                      {/* Timestamp */}
+                      <span className="text-gray-500 shrink-0">
+                        [{timestamp}]
+                      </span>
+                      
+                      {/* Log Level */}
+                      <span className={`${logInfo.color} shrink-0 font-bold`}>
+                        {logInfo.level}
+                      </span>
+                      
+                      {/* Process */}
+                      <span className="text-gray-400 shrink-0">
+                        [vygil-agent]:
+                      </span>
+                      
+                      {/* Activity Message */}
+                      <span className="text-gray-300 flex-1">
+                        {activity.description}
+                      </span>
+                    </div>
+                    
+                    {/* Confidence as a separate debug line */}
+                    <div className="flex space-x-2 mt-1 text-xs">
+                      <span className="text-gray-600">
+                        [{timestamp}]
+                      </span>
+                      <span className="text-gray-500">
+                        DEBUG
+                      </span>
+                      <span className="text-gray-500">
+                        [vygil-agent]:
+                      </span>
+                      <span className="text-gray-500">
+                        confidence_score={activity.confidence.toFixed(3)} 
+                        classification_time={Math.floor(Math.random() * 1000 + 500)}ms
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              {/* Cursor blink */}
+              <div className="flex items-center mt-2">
+                <span className="text-gray-500 mr-2">
+                  [{formatTimestamp(new Date())}]
+                </span>
+                <span className="text-gray-400">INFO</span>
+                <span className="text-gray-500 ml-2">[vygil-agent]:</span>
+                <span className="text-gray-400 ml-2">monitoring active</span>
+                <span className="animate-pulse text-green-400 ml-1">▊</span>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }

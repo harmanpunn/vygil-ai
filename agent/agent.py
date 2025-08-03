@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Any
 import yaml
+from pathlib import Path
 
 # Third-party imports
 from dotenv import load_dotenv
@@ -46,6 +47,67 @@ class ConfigLoader:
         except yaml.YAMLError as e:
             logger.error(f"Error parsing YAML configuration: {e}")
             raise
+
+
+# Simple memory management functions
+def get_memory_file(agent_id: str) -> Path:
+    """Get memory file path for agent"""
+    memory_dir = Path("memory")
+    memory_dir.mkdir(exist_ok=True)
+    return memory_dir / f"{agent_id}_memory.txt"
+
+def get_memory(agent_id: str = "vygil-activity-tracker") -> str:
+    """Load agent memory from file"""
+    try:
+        memory_file = get_memory_file(agent_id)
+        if memory_file.exists():
+            return memory_file.read_text(encoding='utf-8').strip()
+        return ""
+    except Exception as e:
+        logger.error(f"Failed to read memory: {e}")
+        return ""
+
+def update_memory(content: str, agent_id: str = "vygil-activity-tracker"):
+    """Update agent memory file"""
+    try:
+        memory_file = get_memory_file(agent_id)
+        memory_file.write_text(content, encoding='utf-8')
+        logger.debug(f"Memory updated for {agent_id}")
+    except Exception as e:
+        logger.error(f"Failed to update memory: {e}")
+
+def get_current_time() -> str:
+    """Get current time formatted for memory entries"""
+    return datetime.now().strftime('%I:%M %p')
+
+def inject_memory_context(prompt: str, agent_id: str) -> str:
+    """Replace $MEMORY placeholder with actual memory content"""
+    memory_content = get_memory(agent_id)
+    if not memory_content:
+        memory_content = "No previous activities recorded."
+    return prompt.replace('$MEMORY', memory_content)
+
+def execute_autonomous_code(code: str, activity_result: str, agent_id: str):
+    """Execute autonomous code with access to memory functions"""
+    if not code.strip():
+        return
+    
+    try:
+        # Create execution context with utility functions
+        context = {
+            'get_memory': lambda: get_memory(agent_id),
+            'update_memory': lambda content: update_memory(content, agent_id), 
+            'get_current_time': get_current_time,
+            'activity_result': activity_result,
+            'agent_id': agent_id
+        }
+        
+        # Execute the code
+        exec(code, context)
+        logger.debug(f"Autonomous code executed for {agent_id}")
+        
+    except Exception as e:
+        logger.error(f"Autonomous code execution failed: {e}")
 
 
 class LLMProcessor:
@@ -91,7 +153,7 @@ class LLMProcessor:
                 except ImportError:
                     logger.warning("Anthropic package not available for fallback")
     
-    async def classify_activity(self, screen_text: str) -> Tuple[str, float]:
+    async def classify_activity(self, screen_text: str, agent_id: str) -> Tuple[str, float]:
         """
         Classify user activity based on screen text
         Returns: (activity_description, confidence_score)
@@ -99,24 +161,29 @@ class LLMProcessor:
         if not screen_text or len(screen_text.strip()) < 10:
             return "ACTIVITY: Insufficient screen content", 0.2
         
+        # Get system prompt from config and inject memory context
+        system_prompt = self.config.get('instructions', {}).get('system_prompt', '')
+        if not system_prompt:
+            logger.warning("No system prompt found in config")
+            return "ACTIVITY: Configuration error", 0.0
+        
+        # Inject memory context into prompt
+        system_prompt = inject_memory_context(system_prompt, agent_id)
+        
         # Truncate text to avoid token limits
         truncated_text = screen_text[:2000]
         if len(screen_text) > 2000:
             truncated_text += "..."
         
-        user_prompt = f"""Analyze this screen content and identify the user's activity:
-
-<Screen Content>
+        user_prompt = f"""<Screen Content>
 {truncated_text}
-</Screen Content>
-
-What is the user primarily doing? Follow the format rules exactly."""
+</Screen Content>"""
 
         # Try primary provider first
         primary_provider = self.llm_config.get('provider', 'openai')
         if primary_provider in self.clients:
             try:
-                response = await self._query_llm(primary_provider, user_prompt)
+                response = await self._query_llm(primary_provider, user_prompt, system_prompt)
                 if response:
                     confidence = self._calculate_confidence(screen_text, response)
                     return self._format_response(response), confidence
@@ -128,7 +195,7 @@ What is the user primarily doing? Follow the format rules exactly."""
             provider = fallback.get('provider')
             if provider in self.clients:
                 try:
-                    response = await self._query_llm(provider, user_prompt)
+                    response = await self._query_llm(provider, user_prompt, system_prompt)
                     if response:
                         confidence = self._calculate_confidence(screen_text, response)
                         return self._format_response(response), confidence
@@ -139,13 +206,13 @@ What is the user primarily doing? Follow the format rules exactly."""
         logger.error("All LLM providers failed")
         return "ACTIVITY: LLM analysis failed", 0.0
     
-    async def _query_llm(self, provider: str, user_prompt: str) -> Optional[str]:
+    async def _query_llm(self, provider: str, user_prompt: str, system_prompt: str = "") -> Optional[str]:
         """Query specific LLM provider"""
         try:
             if provider == 'openai':
-                return await self._query_openai(user_prompt)
+                return await self._query_openai(user_prompt, system_prompt)
             elif provider == 'anthropic':
-                return await self._query_anthropic(user_prompt)
+                return await self._query_anthropic(user_prompt, system_prompt)
             else:
                 logger.warning(f"Unknown LLM provider: {provider}")
                 return None
@@ -153,37 +220,44 @@ What is the user primarily doing? Follow the format rules exactly."""
             logger.error(f"Error querying {provider}: {e}")
             return None
     
-    async def _query_openai(self, user_prompt: str) -> str:
+    async def _query_openai(self, user_prompt: str, system_prompt: str = "") -> str:
         """Query OpenAI API"""
         client = self.clients['openai']
         model = self.llm_config.get('model', 'gpt-4o-mini')
         
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+        
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
+            messages=messages,
             max_tokens=self.llm_config.get('max_tokens', 50),
             temperature=self.llm_config.get('temperature', 0.1),
             timeout=self.llm_config.get('timeout', 10)
         )
         return response.choices[0].message.content.strip()
     
-    async def _query_anthropic(self, user_prompt: str) -> str:
+    async def _query_anthropic(self, user_prompt: str, system_prompt: str = "") -> str:
         """Query Anthropic Claude API"""
         client = self.clients['anthropic']
         model = self.llm_config.get('model', 'claude-3-haiku-20240307')
         
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model=model,
-            max_tokens=self.llm_config.get('max_tokens', 50),
-            system=self.system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            timeout=self.llm_config.get('timeout', 10)
-        )
+        # Build request parameters
+        params = {
+            'model': model,
+            'max_tokens': self.llm_config.get('max_tokens', 50),
+            'messages': [{"role": "user", "content": user_prompt}],
+            'timeout': self.llm_config.get('timeout', 10)
+        }
+        
+        # Add system prompt if provided
+        if system_prompt:
+            params['system'] = system_prompt
+        
+        response = await asyncio.to_thread(client.messages.create, **params)
         return response.content[0].text.strip()
     
     def _calculate_confidence(self, screen_text: str, response: str) -> float:
@@ -316,6 +390,7 @@ class ActivityTrackingAgent:
     def __init__(self, config_path: str = "config/activity-tracking-agent.yaml"):
         self.config = ConfigLoader.load_config(config_path)
         self.agent_config = self.config.get('agent', {})
+        self.agent_id = self.agent_config.get('id', 'vygil-activity-tracker')
         
         # Initialize components
         self.llm_processor = LLMProcessor(self.config)
@@ -323,7 +398,7 @@ class ActivityTrackingAgent:
         
         # Agent state
         self.running = False
-        self.loop_interval = self.agent_config.get('loop_interval', 25)
+        self.loop_interval = self.agent_config.get('loop_interval', 60)
         self.max_retries = self.agent_config.get('max_retries', 3)
         self.consecutive_failures = 0
         
@@ -336,7 +411,7 @@ class ActivityTrackingAgent:
         logger.info(f"Loop interval: {self.loop_interval} seconds")
     
     async def start_monitoring(self):
-        """Start the 25-second activity monitoring loop"""
+        """Start the 60-second activity monitoring loop"""
         if self.running:
             logger.warning("Agent already running")
             return
@@ -405,10 +480,15 @@ class ActivityTrackingAgent:
             
             screen_text = ocr_result.get("text", "")
             
-            # Step 3: Classify activity using LLM
-            activity_description, confidence = await self.llm_processor.classify_activity(screen_text)
+            # Step 3: Classify activity using LLM (with memory context)
+            activity_description, confidence = await self.llm_processor.classify_activity(screen_text, self.agent_id)
             
-            # Step 4: Log activity (via MCP server)
+            # Step 4: Execute autonomous code (agentic behavior)
+            autonomous_code = self.config.get('code', '')
+            if autonomous_code:
+                execute_autonomous_code(autonomous_code, activity_description, self.agent_id)
+            
+            # Step 5: Log activity (via MCP server)
             log_result = await self.mcp_client.call_tool("log_activity", {
                 "description": activity_description,
                 "confidence": confidence,

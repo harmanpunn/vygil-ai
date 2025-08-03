@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+import httpx
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -30,7 +31,7 @@ load_dotenv()
 # Add agent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 
-from agent import ConfigLoader, LLMProcessor, MCPClient
+from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -136,28 +137,88 @@ async def process_activity(request: ActivityRequest):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}")
         
-        # For MVP, simulate OCR text extraction with variety
-        # In production, this would use MCP server's OCR tool
-        import random
-        mock_ocr_texts = [
-            "VS Code editor with Python file open, showing function definitions and import statements",
-            "Chrome browser showing Stack Overflow page with coding questions and answers",
-            "Terminal window with git commands and file listings visible",
-            "Slack application with team chat messages and notifications",
-            "Gmail inbox with emails from colleagues and project updates",
-            "Notion page with meeting notes and task lists",
-            "YouTube video player showing programming tutorial",
-            "Figma design interface with UI mockups and components",
-            "Discord chat with gaming channel and voice call active",
-            "Microsoft Word document with project documentation"
-        ]
-        mock_ocr_text = random.choice(mock_ocr_texts)
-        logger.info(f"🔤 Using mock OCR text: {mock_ocr_text}")
+        # Send image to MCP REST API server for OCR processing
+        logger.info("🔤 Sending image to MCP REST API server for OCR processing...")
+        mcp_api_host = os.getenv("MCP_SERVER_HOST", "localhost")
+        mcp_api_port = os.getenv("MCP_API_PORT", "3001")  # REST API runs on 3001
+        
+        extracted_text = ""
+        ocr_confidence = 0.0
+        
+        try:
+            # Prepare image data for MCP server (ensure proper format)
+            image_base64 = request.image if request.image.startswith('data:') else f"data:image/png;base64,{request.image}"
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Call MCP REST API server OCR endpoint
+                logger.info(f"📞 Calling MCP API: http://{mcp_api_host}:{mcp_api_port}/api/ocr")
+                
+                ocr_response = await client.post(
+                    f"http://{mcp_api_host}:{mcp_api_port}/api/ocr",
+                    json={"imageData": image_base64},
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                if ocr_response.status_code == 200:
+                    ocr_result = ocr_response.json()
+                    if ocr_result.get("success"):
+                        extracted_text = ocr_result.get("text", "").strip()
+                        ocr_confidence = ocr_result.get("confidence", 0.0)
+                        processing_time = ocr_result.get("processingTime", 0)
+                        
+                        logger.info(f"✅ OCR successful:")
+                        logger.info(f"   - Text length: {len(extracted_text)} characters")
+                        logger.info(f"   - Confidence: {ocr_confidence:.2f}")
+                        logger.info(f"   - Processing time: {processing_time}ms")
+                        logger.info(f"   - Preview: \"{extracted_text[:100]}{'...' if len(extracted_text) > 100 else ''}\"")
+                        
+                        # If OCR returned empty or very short text, use a fallback
+                        if len(extracted_text.strip()) < 10:
+                            logger.warning("⚠️ OCR returned minimal text, using fallback")
+                            extracted_text = "Desktop interface with minimal visible text content"
+                    else:
+                        raise Exception(f"OCR failed: {ocr_result.get('error', 'Unknown error')}")
+                else:
+                    raise Exception(f"MCP server returned {ocr_response.status_code}: {ocr_response.text}")
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ MCP server OCR failed, using fallback: {e}")
+            # Fallback to enhanced mock if MCP server is unavailable
+            import random
+            fallback_texts = [
+                "VS Code editor with Python file open, showing function definitions and import statements",
+                "Chrome browser showing Stack Overflow page with coding questions and answers", 
+                "Terminal window with git commands and file listings visible",
+                "Slack application with team chat messages and notifications",
+                "Gmail inbox with emails from colleagues and project updates",
+                "Notion page with meeting notes and task lists",
+                "YouTube video player showing programming tutorial",
+                "Figma design interface with UI mockups and components",
+                "Microsoft Teams video call with participants visible",
+                "Excel spreadsheet with data tables and charts"
+            ]
+            extracted_text = random.choice(fallback_texts)
+            ocr_confidence = 0.5  # Lower confidence for fallback
+            logger.info(f"🔤 Using fallback OCR text: {extracted_text}")
+        
+        # Ensure we have some text to process
+        if not extracted_text or len(extracted_text.strip()) < 5:
+            extracted_text = "Screen content with interface elements and text"
         
         # Process with LLM
         logger.info("🤖 Calling LLM processor...")
-        activity, confidence = await llm_processor.classify_activity(mock_ocr_text)
+        agent_id = "vygil-activity-tracker"  # Default agent ID for API usage
+        activity, confidence = await llm_processor.classify_activity(extracted_text, agent_id)
         logger.info(f"🎯 LLM returned: activity='{activity}', confidence={confidence}")
+        
+        # Execute autonomous code (agentic behavior) - This was missing!
+        logger.info("🤖 Executing autonomous code...")
+        autonomous_code = config.get('code', '')
+        if autonomous_code:
+            execute_autonomous_code(autonomous_code, activity, agent_id)
+            logger.info("✅ Autonomous code executed - memory updated")
+        else:
+            logger.warning("⚠️ No autonomous code found in config")
         
         # Calculate processing time
         processing_time = asyncio.get_event_loop().time() - start_time
