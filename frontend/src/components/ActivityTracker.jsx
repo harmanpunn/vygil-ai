@@ -646,12 +646,10 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
           </div>
           
           {focusSummary.current_suggestion && (
-            <div className="mt-6 p-4 bg-primary-whisper/50 rounded-lg border border-primary-neutral/20">
-              <div className="text-sm font-medium text-primary-charcoal mb-2 flex items-center gap-2">
-                <span className="text-accents-amber">💡</span>
-                AI Insight
-              </div>
-              <div className="text-sm text-primary-obsidian leading-relaxed italic">{focusSummary.current_suggestion}</div>
+            <div className="mt-4 flex items-center gap-2 text-sm">
+              <span className="text-accents-amber">💡</span>
+              <span className="font-medium text-primary-charcoal">AI Insight:</span>
+              <span className="text-primary-obsidian italic">{focusSummary.current_suggestion}</span>
             </div>
           )}
         </div>
