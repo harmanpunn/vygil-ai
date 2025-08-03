@@ -70,33 +70,12 @@ const SystemDashboard = () => {
           </div>
         </div>
 
-        {/* Available Agents */}
-        <div>
-          <div className="text-sm font-medium text-primary-charcoal mb-3">
-            Available Agents ({systemStats?.agents?.length || 0})
-          </div>
-          <div className="space-y-3">
-            {systemStats?.agents?.map((agent) => (
-              <div key={agent.id} className="p-4 bg-primary-whisper/30 rounded-lg border border-primary-neutral/15 transition-all hover:bg-primary-whisper/50">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-primary-obsidian mb-1">{agent.name}</div>
-                    <div className="text-xs text-primary-charcoal leading-relaxed">{agent.description}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-1 ml-3">
-                    {agent.features?.slice(0, 2).map((feature, index) => (
-                      <span key={index} className="text-xs bg-accents-sage/8 text-accents-sage px-2 py-1 rounded border border-accents-sage/15">
-                        {feature}
-                      </span>
-                    ))}
-                    {agent.features?.length > 2 && (
-                      <span className="text-xs text-semantic-inactive font-mono">+{agent.features.length - 2}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+        {/* Available Agents Count */}
+        <div className="flex items-center justify-between p-4 bg-primary-whisper/50 rounded-lg border border-primary-neutral/20">
+          <span className="text-sm font-medium text-primary-charcoal">Available Agents</span>
+          <span className="text-lg font-light font-mono text-primary-obsidian">
+            {systemStats?.agents?.length || 0}
+          </span>
         </div>
 
         {/* Activity Stats */}
