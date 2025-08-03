@@ -98,38 +98,41 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
   const currentAgentInfo = getAgentById(selectedAgent)
 
   return (
-    <div className="bg-primary-ghost/30 backdrop-blur-sm rounded-2xl p-6 border border-primary-whisper/20">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-primary-dark flex items-center gap-2">
-          <div className="w-2 h-2 bg-accents-sage rounded-full"></div>
+    <div className="bg-primary-ghost border border-primary-neutral/30 rounded-xl p-6 transition-all duration-200 hover:transform hover:-translate-y-0.5 hover:shadow-lg shadow-primary-obsidian/8">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-medium text-primary-obsidian flex items-center gap-3">
+          <div className="w-2 h-2 bg-accents-sage rounded-full animate-pulse"></div>
           Agent Selection
         </h3>
         {isActive && (
-          <div className="px-3 py-1 bg-accents-sage/20 text-accents-sage rounded-full text-sm font-medium">
+          <div className="px-3 py-1.5 bg-accents-sage/10 text-accents-sage rounded-full text-sm font-medium border border-accents-sage/20">
             Active
           </div>
         )}
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
+        <div className="mb-6 p-4 bg-accents-coral/5 border border-accents-coral/20 rounded-lg text-accents-coral text-sm">
+          <div className="font-medium mb-1">Connection Error</div>
+          <div className="opacity-80">{error}</div>
         </div>
       )}
 
       {/* Agent Dropdown */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-primary-dark mb-2">
+      <div className="mb-6">
+        <label className="block text-sm font-medium text-primary-charcoal mb-3">
           Current Agent
         </label>
         <select
           value={selectedAgent}
           onChange={(e) => handleAgentChange(e.target.value)}
           disabled={isLoading || isActive}
-          className={`w-full px-4 py-3 border border-primary-whisper rounded-xl bg-white/80 backdrop-blur-sm 
-            focus:outline-none focus:ring-2 focus:ring-accents-sage focus:border-transparent
+          className={`w-full px-4 py-3 border border-primary-neutral/40 rounded-lg bg-primary-whisper backdrop-blur-sm 
+            focus:outline-none focus:ring-2 focus:ring-accents-sage/30 focus:border-accents-sage/50
             disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200
-            ${isLoading ? 'animate-pulse' : ''}`}
+            text-primary-obsidian font-regular
+            ${isLoading ? 'animate-pulse' : ''}
+            hover:border-accents-sage/40`}
         >
           {availableAgents.map((agent) => (
             <option key={agent.id || agent} value={agent.id || agent}>
@@ -140,12 +143,12 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
       </div>
 
       {/* Current Agent Info */}
-      <div className="space-y-3">
-        <div>
-          <h4 className="font-medium text-primary-dark mb-1">
+      <div className="space-y-4">
+        <div className="p-4 bg-primary-whisper/50 rounded-lg border border-primary-neutral/20">
+          <h4 className="font-medium text-primary-obsidian mb-2">
             {currentAgentInfo.name}
           </h4>
-          <p className="text-sm text-primary-muted">
+          <p className="text-sm text-primary-charcoal leading-relaxed">
             {currentAgentInfo.description}
           </p>
         </div>
@@ -153,12 +156,12 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
         {/* Agent Features */}
         {currentAgentInfo.features && currentAgentInfo.features.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-primary-dark mb-2">Features:</p>
+            <p className="text-sm font-medium text-primary-charcoal mb-3">Capabilities:</p>
             <div className="flex flex-wrap gap-2">
               {currentAgentInfo.features.map((feature, index) => (
                 <span
                   key={index}
-                  className="px-2 py-1 bg-accents-sage/10 text-accents-sage rounded-md text-xs font-medium"
+                  className="px-3 py-1.5 bg-accents-sage/8 text-accents-sage rounded-md text-xs font-medium border border-accents-sage/15 transition-colors hover:bg-accents-sage/12"
                 >
                   {feature}
                 </span>
@@ -168,13 +171,13 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
         )}
 
         {/* Agent Status */}
-        <div className="flex items-center justify-between pt-3 border-t border-primary-whisper/30">
-          <span className="text-sm text-primary-muted">Status:</span>
+        <div className="flex items-center justify-between pt-4 border-t border-primary-neutral/20">
+          <span className="text-sm text-primary-charcoal">Status:</span>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              isActive ? 'bg-green-500' : 'bg-gray-400'
+            <div className={`w-2 h-2 rounded-full transition-colors ${
+              isActive ? 'bg-accents-sage animate-pulse' : 'bg-semantic-inactive'
             }`}></div>
-            <span className="text-sm font-medium text-primary-dark">
+            <span className="text-sm font-medium text-primary-obsidian">
               {isActive ? 'Monitoring' : 'Ready'}
             </span>
           </div>
@@ -182,9 +185,9 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
       </div>
 
       {isActive && (
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-          <p className="text-sm text-yellow-800">
-            <strong>Note:</strong> Stop monitoring to switch agents
+        <div className="mt-6 p-4 bg-accents-amber/5 border border-accents-amber/20 rounded-lg">
+          <p className="text-sm text-amber-800 leading-relaxed">
+            <span className="font-medium">Note:</span> Stop monitoring to switch agents
           </p>
         </div>
       )}

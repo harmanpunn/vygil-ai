@@ -609,46 +609,49 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
       
       {/* Focus Summary (only for focus assistant) */}
       {currentAgent === 'vygil-focus-assistant' && focusSummary && (
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200/50">
-          <h3 className="text-lg font-semibold text-blue-900 mb-4 flex items-center gap-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+        <div className="bg-primary-ghost border border-primary-neutral/30 rounded-xl p-6 transition-all duration-200 hover:transform hover:-translate-y-0.5 hover:shadow-lg shadow-primary-obsidian/8">
+          <h3 className="text-lg font-medium text-primary-obsidian mb-6 flex items-center gap-3">
+            <div className="w-2 h-2 bg-accents-amber rounded-full animate-pulse"></div>
             Focus Session Summary
           </h3>
           
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-700">
+            <div className="text-center p-4 bg-accents-amber/5 rounded-lg border border-accents-amber/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {focusSummary.productivity_score?.toFixed(1) || '0.0'}
               </div>
-              <div className="text-sm text-blue-600">Productivity Score</div>
+              <div className="text-xs text-primary-charcoal font-medium">Productivity Score</div>
             </div>
             
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-700">
+            <div className="text-center p-4 bg-accents-sage/5 rounded-lg border border-accents-sage/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {focusSummary.focus_sessions || 0}
               </div>
-              <div className="text-sm text-blue-600">Focus Sessions</div>
+              <div className="text-xs text-primary-charcoal font-medium">Focus Sessions</div>
             </div>
             
-            <div className="text-center">
-              <div className="text-2xl font-bold text-red-600">
+            <div className="text-center p-4 bg-accents-coral/5 rounded-lg border border-accents-coral/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {focusSummary.distractions || 0}
               </div>
-              <div className="text-sm text-red-600">Distractions</div>
+              <div className="text-xs text-primary-charcoal font-medium">Distractions</div>
             </div>
             
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
+            <div className="text-center p-4 bg-accents-frost/5 rounded-lg border border-accents-frost/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {Math.round(focusSummary.total_focus_time / 60) || 0}m
               </div>
-              <div className="text-sm text-green-600">Focus Time</div>
+              <div className="text-xs text-primary-charcoal font-medium">Focus Time</div>
             </div>
           </div>
           
           {focusSummary.current_suggestion && (
-            <div className="mt-4 p-3 bg-white/80 rounded-lg border border-blue-200">
-              <div className="text-sm font-medium text-blue-900">💡 Suggestion:</div>
-              <div className="text-sm text-blue-800 mt-1">{focusSummary.current_suggestion}</div>
+            <div className="mt-6 p-4 bg-primary-whisper/50 rounded-lg border border-primary-neutral/20">
+              <div className="text-sm font-medium text-primary-charcoal mb-2 flex items-center gap-2">
+                <span className="text-accents-amber">💡</span>
+                AI Insight
+              </div>
+              <div className="text-sm text-primary-obsidian leading-relaxed italic">{focusSummary.current_suggestion}</div>
             </div>
           )}
         </div>

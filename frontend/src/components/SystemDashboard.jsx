@@ -50,21 +50,21 @@ const SystemDashboard = () => {
   }
 
   return (
-    <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 border border-primary-whisper/20">
-      <h3 className="text-lg font-semibold text-primary-dark mb-4 flex items-center gap-2">
-        <div className="w-2 h-2 bg-accents-sage rounded-full"></div>
+    <div className="bg-primary-ghost border border-primary-neutral/30 rounded-xl p-6 transition-all duration-200 hover:transform hover:-translate-y-0.5 hover:shadow-lg shadow-primary-obsidian/8">
+      <h3 className="text-lg font-medium text-primary-obsidian mb-6 flex items-center gap-3">
+        <div className="w-2 h-2 bg-accents-frost rounded-full animate-pulse"></div>
         System Status
       </h3>
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         {/* System Health */}
-        <div className="flex items-center justify-between p-3 bg-primary-ghost/30 rounded-lg">
-          <span className="text-sm font-medium text-primary-dark">Backend Status</span>
+        <div className="flex items-center justify-between p-4 bg-primary-whisper/50 rounded-lg border border-primary-neutral/20">
+          <span className="text-sm font-medium text-primary-charcoal">Backend Status</span>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              systemStats?.health?.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'
+            <div className={`w-2 h-2 rounded-full transition-colors ${
+              systemStats?.health?.status === 'healthy' ? 'bg-accents-sage animate-pulse' : 'bg-accents-coral'
             }`}></div>
-            <span className="text-sm text-primary-muted capitalize">
+            <span className="text-sm font-medium text-primary-obsidian capitalize">
               {systemStats?.health?.status || 'Unknown'}
             </span>
           </div>
@@ -72,25 +72,27 @@ const SystemDashboard = () => {
 
         {/* Available Agents */}
         <div>
-          <div className="text-sm font-medium text-primary-dark mb-2">
+          <div className="text-sm font-medium text-primary-charcoal mb-3">
             Available Agents ({systemStats?.agents?.length || 0})
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {systemStats?.agents?.map((agent) => (
-              <div key={agent.id} className="flex items-center justify-between p-2 bg-primary-ghost/20 rounded-lg">
-                <div className="flex-1">
-                  <div className="text-sm font-medium text-primary-dark">{agent.name}</div>
-                  <div className="text-xs text-primary-muted">{agent.description}</div>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {agent.features?.slice(0, 2).map((feature, index) => (
-                    <span key={index} className="text-xs bg-accents-sage/10 text-accents-sage px-2 py-1 rounded">
-                      {feature}
-                    </span>
-                  ))}
-                  {agent.features?.length > 2 && (
-                    <span className="text-xs text-primary-muted">+{agent.features.length - 2}</span>
-                  )}
+              <div key={agent.id} className="p-4 bg-primary-whisper/30 rounded-lg border border-primary-neutral/15 transition-all hover:bg-primary-whisper/50">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-primary-obsidian mb-1">{agent.name}</div>
+                    <div className="text-xs text-primary-charcoal leading-relaxed">{agent.description}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-1 ml-3">
+                    {agent.features?.slice(0, 2).map((feature, index) => (
+                      <span key={index} className="text-xs bg-accents-sage/8 text-accents-sage px-2 py-1 rounded border border-accents-sage/15">
+                        {feature}
+                      </span>
+                    ))}
+                    {agent.features?.length > 2 && (
+                      <span className="text-xs text-semantic-inactive font-mono">+{agent.features.length - 2}</span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -100,34 +102,34 @@ const SystemDashboard = () => {
         {/* Activity Stats */}
         {systemStats?.stats && (
           <div className="grid grid-cols-2 gap-3">
-            <div className="text-center p-3 bg-blue-50 rounded-lg">
-              <div className="text-lg font-bold text-blue-700">
+            <div className="text-center p-4 bg-accents-frost/5 rounded-lg border border-accents-frost/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {systemStats.stats.total_activities || 0}
               </div>
-              <div className="text-xs text-blue-600">Total Activities</div>
+              <div className="text-xs text-primary-charcoal font-medium">Activities Captured</div>
             </div>
-            <div className="text-center p-3 bg-green-50 rounded-lg">
-              <div className="text-lg font-bold text-green-700">
+            <div className="text-center p-4 bg-accents-sage/5 rounded-lg border border-accents-sage/15 transition-all hover:transform hover:scale-102">
+              <div className="text-2xl font-light font-mono text-primary-obsidian mb-1">
                 {systemStats.stats.average_confidence?.toFixed(1) || '0.0'}%
               </div>
-              <div className="text-xs text-green-600">Avg Confidence</div>
+              <div className="text-xs text-primary-charcoal font-medium">Avg Confidence</div>
             </div>
           </div>
         )}
 
         {/* Quick Actions */}
-        <div className="pt-3 border-t border-primary-whisper/30">
-          <div className="text-sm font-medium text-primary-dark mb-2">Quick Actions</div>
-          <div className="grid grid-cols-2 gap-2">
+        <div className="pt-6 border-t border-primary-neutral/20">
+          <div className="text-sm font-medium text-primary-charcoal mb-3">Quick Actions</div>
+          <div className="grid grid-cols-2 gap-3">
             <button 
               onClick={() => window.location.reload()}
-              className="px-3 py-2 bg-primary-whisper text-primary-dark rounded-lg text-sm hover:bg-primary-whisper/80 transition-colors"
+              className="px-4 py-2.5 bg-primary-neutral/20 text-primary-charcoal rounded-lg text-sm hover:bg-primary-neutral/30 transition-all duration-200 hover:transform hover:-translate-y-0.5 font-medium"
             >
               Refresh
             </button>
             <button 
               onClick={() => fetch('/api/activities', { method: 'DELETE' })}
-              className="px-3 py-2 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200 transition-colors"
+              className="px-4 py-2.5 bg-accents-coral/10 text-accents-coral rounded-lg text-sm hover:bg-accents-coral/15 transition-all duration-200 hover:transform hover:-translate-y-0.5 font-medium border border-accents-coral/20"
             >
               Clear Logs
             </button>
