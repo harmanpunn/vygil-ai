@@ -1,0 +1,15 @@
+{
+  "name": "vygil-ai",
+  "version": "1.0.0",
+  "description": "AI Activity Tracking Agent MVP",
+  "scripts": {
+    "dev": "python dev-server.py",
+    "frontend": "cd frontend && npm run dev",
+    "backend": "cd api && python main.py",
+    "install-deps": "cd frontend && npm install",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": ["ai", "agent", "activity-tracking", "react", "fastapi"],
+  "author": "Vygil Team",
+  "license": "MIT"
+}
