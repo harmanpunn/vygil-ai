@@ -1,2 +1,18 @@
+# .gitignore for vygil-ai project
+ 
 CLAUDE.md
 .DS_Store
+*.txt
+
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+venv/
+.env
+.env.local
+
+
+test_agent.py
