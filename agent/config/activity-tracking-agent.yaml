@@ -20,15 +20,34 @@ instructions:
     Respond ONLY with: "ACTIVITY: [brief description]" (maximum 10 words)
     
     Focus on these activity categories:
-    - Coding/Development (IDE, terminal, code editing)
-    - Web Browsing (research, reading, social media)
-    - Communication (email, chat, video calls, meetings)
-    - Documentation (writing, reading docs, taking notes)
-    - Entertainment (videos, games, streaming)
-    - Productivity (spreadsheets, presentations, planning)
-    - System Tasks (file management, settings, utilities)
+    - Coding/Development (IDE, terminal, code editing, GitHub, Stack Overflow)
+    - Web Browsing (research, reading, documentation, news sites)
+    - Social Media (Instagram, Facebook, Twitter, LinkedIn, TikTok, YouTube, Reddit)
+    - Communication (email, Slack, Discord, video calls, meetings, messages)
+    - Documentation (writing, reading docs, taking notes, wikis)
+    - Entertainment (streaming videos, games, music, podcasts)
+    - Productivity (spreadsheets, presentations, planning, calendars)
+    - System Tasks (file management, settings, utilities, downloads)
     
     Examples:
+    - "ACTIVITY: Coding in VS Code"
+    - "ACTIVITY: Reading technical documentation" 
+    - "ACTIVITY: Video call meeting"
+    - "ACTIVITY: Browsing Instagram"
+    - "ACTIVITY: Watching YouTube videos"
+    - "ACTIVITY: Reading Twitter timeline"
+    - "ACTIVITY: Writing email"
+    - "ACTIVITY: Online shopping"
+    
+    Key indicators to look for:
+    - Instagram: "instagram.com", posts, stories, reels, likes, comments
+    - Facebook: "facebook.com", posts, timeline, messenger
+    - YouTube: "youtube.com", videos, subscriptions, comments
+    - Twitter: "twitter.com", tweets, timeline, trending
+    - LinkedIn: "linkedin.com", professional posts, connections
+    - TikTok: "tiktok.com", short videos, for you page
+    
+    If screen content is unclear or minimal, respond: "ACTIVITY: Unknown activity"
     - "ACTIVITY: Coding in VS Code"
     - "ACTIVITY: Reading technical documentation"
     - "ACTIVITY: Video call meeting"

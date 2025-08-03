@@ -186,7 +186,7 @@ class LLMProcessor:
                 response = await self._query_llm(primary_provider, user_prompt, system_prompt)
                 if response:
                     confidence = self._calculate_confidence(screen_text, response)
-                    return self._format_response(response), confidence
+                    return self._format_response(response, agent_id), confidence
             except Exception as e:
                 logger.warning(f"Primary LLM provider {primary_provider} failed: {e}")
         
@@ -198,7 +198,7 @@ class LLMProcessor:
                     response = await self._query_llm(provider, user_prompt, system_prompt)
                     if response:
                         confidence = self._calculate_confidence(screen_text, response)
-                        return self._format_response(response), confidence
+                        return self._format_response(response, agent_id), confidence
                 except Exception as e:
                     logger.warning(f"Fallback LLM provider {provider} failed: {e}")
         
@@ -277,8 +277,45 @@ class LLMProcessor:
         
         return min(base_confidence, 1.0)
     
-    def _format_response(self, response: str) -> str:
-        """Ensure response follows ACTIVITY: format"""
+    def _format_response(self, response: str, agent_id: str = None) -> str:
+        """Format response based on agent type"""
+        # For Focus Assistant, extract human-readable message from JSON
+        if agent_id and 'focus-assistant' in agent_id:
+            try:
+                import json
+                import re
+                
+                # Extract JSON from response if it's wrapped
+                json_str = response
+                if response.startswith("ACTIVITY:"):
+                    json_str = response[9:].strip()
+                
+                # Find JSON in the string
+                if not json_str.startswith('{'):
+                    json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                
+                # Parse and extract meaningful message
+                focus_data = json.loads(json_str)
+                activity = focus_data.get('activity', 'Unknown activity')
+                suggestion = focus_data.get('suggestion', '')
+                
+                # Create a clean, non-repetitive message
+                if suggestion:
+                    # Check if suggestion already mentions the activity to avoid repetition
+                    if activity.lower() in suggestion.lower():
+                        return f"ACTIVITY: {suggestion}"
+                    else:
+                        return f"ACTIVITY: {activity}. {suggestion}"
+                else:
+                    return f"ACTIVITY: {activity}"
+                    
+            except (json.JSONDecodeError, AttributeError):
+                # Fallback to original response if JSON parsing fails
+                pass
+        
+        # Default formatting for regular activity tracker
         if not response.startswith("ACTIVITY:"):
             return f"ACTIVITY: {response}"
         return response
@@ -647,6 +684,152 @@ async def main():
         return 1
     
     return 0
+
+
+class FocusAssistantAgent(ActivityTrackingAgent):
+    """Focus Assistant Agent - extends ActivityTrackingAgent with focus-specific features"""
+    
+    def __init__(self, config_path: str):
+        super().__init__(config_path)
+        self.focus_metrics = []
+        self.distraction_count = 0
+        self.productivity_score = 0.0
+        
+    async def _process_activity_result(self, result: str) -> Dict[str, Any]:
+        """Process focus-specific results"""
+        try:
+            import json
+            import re
+            
+            # Extract JSON from "ACTIVITY: {JSON}" format
+            json_str = result
+            if result.startswith("ACTIVITY:"):
+                # Remove "ACTIVITY:" prefix and extract JSON
+                json_str = result[9:].strip()
+            
+            # Try to find JSON in the string if it's not pure JSON
+            if not json_str.startswith('{'):
+                json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    raise json.JSONDecodeError("No JSON found", result, 0)
+            
+            # Parse JSON
+            focus_data = json.loads(json_str)
+            
+            # Update focus metrics
+            self.productivity_score = focus_data.get('productivity_score', 0.0)
+            
+            if focus_data.get('category') == 'distraction':
+                self.distraction_count += 1
+            else:
+                self.distraction_count = max(0, self.distraction_count - 1)
+            
+            # Store focus metrics
+            self.focus_metrics.append({
+                'timestamp': time.time(),
+                'focus_level': focus_data.get('focus_level'),
+                'productivity_score': self.productivity_score,
+                'category': focus_data.get('category'),
+                'suggestion': focus_data.get('suggestion')
+            })
+            
+            # Keep only last 50 entries
+            if len(self.focus_metrics) > 50:
+                self.focus_metrics = self.focus_metrics[-50:]
+            
+            logger.info(f"📊 Focus metrics updated: productivity={self.productivity_score:.2f}, category={focus_data.get('category')}")
+            return focus_data
+            
+        except (json.JSONDecodeError, AttributeError) as e:
+            logger.warning(f"Failed to parse focus JSON from: {result[:100]}... Error: {e}")
+            # Fallback - return basic activity structure
+            return {
+                'activity': result,
+                'focus_level': 'medium',
+                'productivity_score': 0.5,
+                'category': 'unknown',
+                'suggestion': 'Unable to parse focus data'
+            }
+    
+    def get_focus_summary(self) -> Dict[str, Any]:
+        """Get current focus session summary"""
+        if not self.focus_metrics:
+            return {
+                'productivity_score': 0.0,
+                'focus_sessions': 0,
+                'distractions': 0,
+                'total_focus_time': 0,
+                'status': 'no_data'
+            }
+        
+        recent_metrics = self.focus_metrics[-10:]  # Last 10 entries
+        avg_productivity = sum(m['productivity_score'] for m in recent_metrics) / len(recent_metrics)
+        
+        focus_levels = [m['focus_level'] for m in recent_metrics]
+        dominant_focus = max(set(focus_levels), key=focus_levels.count)
+        
+        # Calculate focus sessions (consecutive periods of medium/high focus)
+        focus_sessions = 0
+        in_focus_session = False
+        for metric in self.focus_metrics:
+            if metric.get('focus_level') in ['medium', 'high']:
+                if not in_focus_session:
+                    focus_sessions += 1
+                    in_focus_session = True
+            else:
+                in_focus_session = False
+        
+        # Calculate total focus time (approximate, assuming 60 second intervals)
+        focus_entries = [m for m in self.focus_metrics if m.get('focus_level') in ['medium', 'high']]
+        total_focus_time = len(focus_entries) * 60  # 60 seconds per entry
+        
+        return {
+            'productivity_score': avg_productivity,
+            'focus_sessions': focus_sessions,
+            'distractions': self.distraction_count,
+            'total_focus_time': total_focus_time,
+            'dominant_focus_level': dominant_focus,
+            'total_sessions': len(self.focus_metrics),
+            'current_suggestion': recent_metrics[-1].get('suggestion', '') if recent_metrics else ''
+        }
+
+
+# Missing in agent.py - needed for Focus Assistant
+def store_focus_metrics(metrics: Dict[str, Any], agent_id: str = "vygil-focus-assistant"):
+    """Store focus metrics to a JSON file for persistence"""
+    try:
+        metrics_file = Path(__file__).parent / "memory" / f"{agent_id}_focus_metrics.json"
+        metrics_file.parent.mkdir(exist_ok=True)
+        
+        # Load existing metrics
+        existing_metrics = []
+        if metrics_file.exists():
+            try:
+                with open(metrics_file, 'r') as f:
+                    existing_metrics = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                existing_metrics = []
+        
+        # Add new metrics
+        existing_metrics.append({
+            'timestamp': time.time(),
+            **metrics
+        })
+        
+        # Keep only last 100 entries
+        if len(existing_metrics) > 100:
+            existing_metrics = existing_metrics[-100:]
+        
+        # Save back to file
+        with open(metrics_file, 'w') as f:
+            json.dump(existing_metrics, f, indent=2)
+            
+        logger.debug(f"Stored focus metrics for {agent_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to store focus metrics: {e}")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 
 from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
+from agent_manager import AgentManager
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -68,6 +69,18 @@ class HealthResponse(BaseModel):
     timestamp: str
     agent_ready: bool
 
+class AgentInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    features: List[str]
+
+class AgentListResponse(BaseModel):
+    agents: List[AgentInfo]
+
+class AgentSelectionRequest(BaseModel):
+    agent_id: str
+
 # Global components
 app = FastAPI(
     title="Vygil Activity Tracking API",
@@ -88,14 +101,18 @@ app.add_middleware(
 config = None
 llm_processor = None
 mcp_client = None
+agent_manager = None
 activity_logs: List[ActivityLog] = []
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup"""
-    global config, llm_processor, mcp_client
+    global config, llm_processor, mcp_client, agent_manager
     
     try:
+        # Initialize Agent Manager first
+        agent_manager = AgentManager()
+        
         # Load configuration
         config_path = os.path.join(os.path.dirname(__file__), '..', 'agent', 'config', 'activity-tracking-agent.yaml')
         config = ConfigLoader.load_config(config_path)
@@ -107,18 +124,20 @@ async def startup_event():
         mcp_client = MCPClient(config)
         
         logger.info("Vygil API server started successfully")
+        logger.info(f"Discovered {len(agent_manager.get_available_agents())} agents")
         
     except Exception as e:
         logger.error(f"Failed to initialize server: {e}")
         raise
 
 @app.get("/health", response_model=HealthResponse)
+@app.get("/api/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        agent_ready=llm_processor is not None and mcp_client is not None
+        agent_ready=llm_processor is not None and mcp_client is not None and agent_manager is not None
     )
 
 @app.post("/api/process-activity", response_model=ActivityResponse)
@@ -234,18 +253,81 @@ Decide which tool to use first. Respond with JSON:
         
         # Process with LLM
         logger.info("🤖 Calling LLM processor...")
-        agent_id = "vygil-activity-tracker"  # Default agent ID for API usage
-        activity, confidence = await llm_processor.classify_activity(extracted_text, agent_id)
-        logger.info(f"🎯 LLM returned: activity='{activity}', confidence={confidence}")
         
-        # Execute autonomous code (agentic behavior) - This was missing!
+        # Get currently selected agent and use agent-specific configuration
+        current_agent_info = agent_manager.get_current_agent_info()
+        current_agent = agent_manager.get_current_agent()
+        if current_agent_info:
+            agent_id = current_agent_info['id']
+            logger.info(f"Using current agent: {current_agent_info['name']} ({agent_id})")
+            
+            # Use the current agent's configuration for LLM processing
+            agent_config = current_agent_info.get('config', config)
+        else:
+            agent_id = "vygil-activity-tracker"  # Fallback
+            agent_config = config
+            logger.warning("No current agent selected, using fallback")
+            
+        # Create agent-specific LLM processor
+        agent_llm_processor = LLMProcessor(agent_config)
+        
+        # For Focus Assistant, we need the raw LLM response before formatting
+        if current_agent and hasattr(current_agent, '_process_activity_result'):
+            logger.info("🎯 Using Focus Assistant - getting raw LLM response...")
+            
+            # Get raw response from LLM without formatting
+            system_prompt = agent_config.get('instructions', {}).get('system_prompt', '')
+            if system_prompt:
+                # Inject memory context into prompt
+                from agent import inject_memory_context
+                system_prompt = inject_memory_context(system_prompt, agent_id)
+                
+                user_prompt = f"""<Screen Content>
+{extracted_text[:2000]}
+</Screen Content>"""
+                
+                # Query LLM directly for raw JSON response
+                raw_response = await agent_llm_processor._query_llm(
+                    agent_llm_processor.llm_config.get('provider', 'openai'),
+                    user_prompt, 
+                    system_prompt
+                )
+                
+                if raw_response:
+                    logger.info(f"🎯 Raw LLM response for Focus Assistant: {raw_response[:100]}...")
+                    
+                    # Process with Focus Assistant
+                    try:
+                        focus_result = await current_agent._process_activity_result(raw_response)
+                        logger.info(f"✅ Focus metrics updated: {focus_result}")
+                        
+                        # Format the response for UI display
+                        activity = agent_llm_processor._format_response(raw_response, agent_id)
+                        confidence = agent_llm_processor._calculate_confidence(extracted_text, raw_response)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Focus Assistant processing failed: {e}")
+                        # Fallback to regular processing
+                        activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+                else:
+                    # Fallback if raw response fails
+                    activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+            else:
+                # Fallback if no system prompt
+                activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+        else:
+            # Regular agent processing
+            activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+        
+        logger.info(f"🎯 Final result: activity='{activity}', confidence={confidence}")
+        
+        # Execute autonomous code (agentic behavior)
         logger.info("🤖 Executing autonomous code...")
-        autonomous_code = config.get('code', '')
+        autonomous_code = agent_config.get('code', '')
         if autonomous_code:
             execute_autonomous_code(autonomous_code, activity, agent_id)
             logger.info("✅ Autonomous code executed - memory updated")
         else:
-            logger.warning("⚠️ No autonomous code found in config")
+            logger.warning("⚠️ No autonomous code found in agent config")
         
         # Calculate processing time
         processing_time = asyncio.get_event_loop().time() - start_time
@@ -338,6 +420,79 @@ async def get_stats():
         "average_confidence": avg_confidence,
         "session_start": session_start
     }
+
+@app.get("/api/agents", response_model=AgentListResponse)
+async def get_available_agents():
+    """List all discovered agents"""
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    
+    available_agents = agent_manager.get_available_agents()
+    agents_list = []
+    
+    for agent_id, agent_info in available_agents.items():
+        agents_list.append(AgentInfo(
+            id=agent_id,
+            name=agent_info.get('name', agent_id),
+            description=agent_info.get('description', 'No description'),
+            features=agent_info.get('features', [])
+        ))
+    
+    return AgentListResponse(agents=agents_list)
+
+@app.post("/api/agents/select") 
+async def select_agent(request: AgentSelectionRequest):
+    """Switch active agent"""
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    
+    agent_id = request.agent_id
+    available_agents = agent_manager.get_available_agents()
+    
+    if agent_id not in available_agents:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    
+    # Switch to the selected agent
+    success = await agent_manager.select_agent(agent_id)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to switch to agent '{agent_id}'")
+    
+    logger.info(f"Active agent switched to: {agent_id}")
+    
+    return {
+        "message": f"Active agent switched to: {available_agents[agent_id]['name']}",
+        "agent_id": agent_id,
+        "agent_name": available_agents[agent_id]['name']
+    }
+
+@app.get("/api/focus/summary")
+async def get_focus_summary():
+    """Focus-specific metrics"""
+    if not agent_manager:
+        raise HTTPException(status_code=503, detail="Agent manager not initialized")
+    
+    current_agent = agent_manager.get_current_agent()
+    current_agent_info = agent_manager.get_current_agent_info()
+    
+    if not current_agent_info or 'focus-assistant' not in current_agent_info.get('id', ''):
+        return {
+            "message": "Focus assistant not active",
+            "active_agent": current_agent_info.get('name', 'Unknown') if current_agent_info else None
+        }
+    
+    # Get focus metrics from the focus assistant agent
+    if hasattr(current_agent, 'get_focus_summary'):
+        focus_summary = current_agent.get_focus_summary()
+        return {
+            "message": "Focus summary retrieved",
+            "summary": focus_summary,
+            "agent": current_agent_info.get('name', 'Focus Assistant')
+        }
+    else:
+        return {
+            "message": "Focus summary not available",
+            "active_agent": current_agent_info.get('name', 'Unknown')
+        }
 
 # Serve static frontend files (for production)
 if os.path.exists("../frontend/dist"):
