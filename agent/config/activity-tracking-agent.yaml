@@ -1,0 +1,98 @@
+# Vygil Activity Tracking Agent Configuration
+
+agent:
+  name: "Vygil Activity Tracker"
+  id: "vygil-activity-tracker"
+  version: "1.0.0"
+  loop_interval: 25  # seconds between activity captures
+  max_retries: 3
+  timeout: 10  # seconds for each operation
+  
+instructions:
+  system_prompt: |
+    You are an activity tracking agent that monitors user screen content and identifies activitie.
+    
+    Analyze the provided OCR text from the user's screen and classify their current activity.
+    
+    Respond ONLY with: "ACTIVITY: [brief description]" (maximum 10 words)
+    
+    Focus on these activity categories:
+    - Coding/Development (IDE, terminal, code editing)
+    - Web Browsing (research, reading, social media)
+    - Communication (email, chat, video calls, meetings)
+    - Documentation (writing, reading docs, taking notes)
+    - Entertainment (videos, games, streaming)
+    - Productivity (spreadsheets, presentations, planning)
+    - System Tasks (file management, settings, utilities)
+    
+    Examples:
+    - "ACTIVITY: Coding in VS Code"
+    - "ACTIVITY: Reading technical documentation"
+    - "ACTIVITY: Video call meeting"
+    - "ACTIVITY: Browsing social media"
+    - "ACTIVITY: Writing email"
+    
+    If screen content is unclear or minimal, respond: "ACTIVITY: Unknown activity"
+
+mcp_server:
+  host: "localhost"
+  port: 3000
+  protocol: "http"  # or "stdio"
+  timeout: 5  # seconds
+  tools:
+    screen_capture:
+      name: "screen_capture"
+      description: "Captures current screen as base64 image"
+    extract_text:
+      name: "extract_text" 
+      description: "Performs OCR on captured screen content"
+    log_activity:
+      name: "log_activity"
+      description: "Stores activity description with timestamp"
+    get_recent_activities:
+      name: "get_recent_activities"
+      description: "Retrieves last N activities for context"
+
+llm:
+  provider: "openai"  # options: "openai", "anthropic", "fireworks"
+  model: "gpt-4o-mini"  # fast and cost-effective for classification
+  temperature: 0.1  # low for consistent classification
+  max_tokens: 50
+  timeout: 10  # seconds
+
+  # Backup providers (fallback if primary fails)
+  fallback_providers:
+    - provider: "anthropic"
+      model: "claude-3-haiku-20240307"
+    - provider: "fireworks"
+      model: "accounts/fireworks/models/llama-v3-8b-instruct"
+
+privacy:
+  screen_permission_required: true
+  user_consent_message: |
+    Vygil needs screen recording permission to track your activities.
+    Your screen data is processed locally and only activity descriptions are stored.
+  pause_monitoring_key: "Ctrl+Shift+P"  # hotkey to pause/resume
+  
+monitoring:
+  confidence_scoring: true  # score activity classification confidence
+  context_window: 5  # number of recent activities to consider
+  adaptive_prompts: false  # adjust prompts based on user patterns (future feature)
+  
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/agent.log"
+  max_file_size: "10MB"
+  backup_count: 5
+
+error_handling:
+  max_consecutive_failures: 5  # stop agent after this many failures
+  retry_delay: 2  # seconds between retries
+  graceful_shutdown: true
+  fallback_activity: "ACTIVITY: System monitoring unavailable"
+
+performance:
+  memory_limit: "512MB"
+  cpu_threshold: 80  # percentage
+  health_check_interval: 300  # seconds (5 minutes)
