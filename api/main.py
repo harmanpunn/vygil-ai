@@ -271,18 +271,54 @@ Decide which tool to use first. Respond with JSON:
         # Create agent-specific LLM processor
         agent_llm_processor = LLMProcessor(agent_config)
         
-        activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
-        logger.info(f"🎯 LLM returned: activity='{activity}', confidence={confidence}")
-        
-        # If using Focus Assistant, process the result to generate focus metrics
+        # For Focus Assistant, we need the raw LLM response before formatting
         if current_agent and hasattr(current_agent, '_process_activity_result'):
-            logger.info("🎯 Processing activity result with Focus Assistant...")
-            try:
-                # Focus Assistant processes the LLM response directly
-                focus_result = await current_agent._process_activity_result(activity)
-                logger.info(f"✅ Focus metrics updated: {focus_result}")
-            except Exception as e:
-                logger.warning(f"⚠️ Focus Assistant processing failed: {e}")
+            logger.info("🎯 Using Focus Assistant - getting raw LLM response...")
+            
+            # Get raw response from LLM without formatting
+            system_prompt = agent_config.get('instructions', {}).get('system_prompt', '')
+            if system_prompt:
+                # Inject memory context into prompt
+                from agent import inject_memory_context
+                system_prompt = inject_memory_context(system_prompt, agent_id)
+                
+                user_prompt = f"""<Screen Content>
+{extracted_text[:2000]}
+</Screen Content>"""
+                
+                # Query LLM directly for raw JSON response
+                raw_response = await agent_llm_processor._query_llm(
+                    agent_llm_processor.llm_config.get('provider', 'openai'),
+                    user_prompt, 
+                    system_prompt
+                )
+                
+                if raw_response:
+                    logger.info(f"🎯 Raw LLM response for Focus Assistant: {raw_response[:100]}...")
+                    
+                    # Process with Focus Assistant
+                    try:
+                        focus_result = await current_agent._process_activity_result(raw_response)
+                        logger.info(f"✅ Focus metrics updated: {focus_result}")
+                        
+                        # Format the response for UI display
+                        activity = agent_llm_processor._format_response(raw_response, agent_id)
+                        confidence = agent_llm_processor._calculate_confidence(extracted_text, raw_response)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Focus Assistant processing failed: {e}")
+                        # Fallback to regular processing
+                        activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+                else:
+                    # Fallback if raw response fails
+                    activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+            else:
+                # Fallback if no system prompt
+                activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+        else:
+            # Regular agent processing
+            activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+        
+        logger.info(f"🎯 Final result: activity='{activity}', confidence={confidence}")
         
         # Execute autonomous code (agentic behavior)
         logger.info("🤖 Executing autonomous code...")

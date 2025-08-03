@@ -174,7 +174,7 @@ code: |
   # Store focus event in memory
   memory = get_memory()
   timestamp = get_current_time()
-  focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | {activity}"
+  focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | ACTIVITY: {activity}"
   
   # Update memory with focus tracking
   updated_memory = memory + "\n" + focus_entry if memory else focus_entry
@@ -186,12 +186,5 @@ code: |
   
   update_memory(updated_memory)
   
-  # Store additional focus metrics
-  store_focus_metrics({
-      'timestamp': timestamp,
-      'focus_level': focus_level,
-      'productivity_score': productivity_score,
-      'category': category,
-      'suggestion': suggestion,
-      'activity': activity
-  })
+  # Log focus metrics (the Focus Assistant agent handles internal metrics storage)
+  print(f"📊 Focus metrics logged: {focus_level} focus, {productivity_score:.2f} productivity, {category} category")

@@ -322,6 +322,51 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
     console.log('🤖 Sending image to API for processing...')
     const result = await processActivity(base64Image)
     
+    // Clean up the activity message for display
+    const cleanActivityMessage = (activityText) => {
+      // Remove "ACTIVITY: " prefix if present
+      let cleaned = activityText.replace(/^ACTIVITY:\s*/, '')
+      
+      // Split into sentences and clean up
+      const sentences = cleaned.split('.').map(s => s.trim()).filter(s => s.length > 0)
+      
+      if (sentences.length > 1) {
+        const firstSentence = sentences[0]
+        const secondSentence = sentences[1]
+        
+        // Check for repetitive patterns like "You've been browsing Instagram. Consider taking a break..."
+        if (firstSentence.toLowerCase().includes('browsing') && 
+            firstSentence.toLowerCase().includes('instagram') &&
+            secondSentence.toLowerCase().includes('consider')) {
+          // Return just the suggestion without repetition
+          return sentences.slice(1).join('. ')
+        }
+        
+        // Check for other repetitive patterns
+        const activityKeywords = ['browsing', 'coding', 'writing', 'reading', 'working', 'watching']
+        const hasRepetition = activityKeywords.some(keyword => 
+          firstSentence.toLowerCase().includes(keyword) && 
+          sentences.slice(1).join(' ').toLowerCase().includes(keyword)
+        )
+        
+        if (hasRepetition) {
+          // If there's a suggestion (Consider, Try, etc.), use that
+          const suggestionSentences = sentences.slice(1)
+          const hasSuggestion = suggestionSentences.some(s => 
+            s.includes('Consider') || s.includes('Try') || s.includes('take a break')
+          )
+          
+          if (hasSuggestion) {
+            return suggestionSentences.join('. ')
+          } else {
+            return firstSentence
+          }
+        }
+      }
+      
+      return cleaned
+    }
+
     // Add new activity to log
     const newActivity = {
       id: Date.now(),
@@ -331,7 +376,10 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
     }
     
     setActivities(prev => [newActivity, ...prev.slice(0, 49)]) // Keep last 50
-    setStatus(`Last activity: ${result.activity}`)
+    
+    // Set clean status message
+    const cleanMessage = cleanActivityMessage(result.activity)
+    setStatus(`Last activity: ${cleanMessage}`)
     
     const cycleTime = Date.now() - cycleStart
     console.log(`✅ Activity detected: ${result.activity}`)

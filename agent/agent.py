@@ -186,7 +186,7 @@ class LLMProcessor:
                 response = await self._query_llm(primary_provider, user_prompt, system_prompt)
                 if response:
                     confidence = self._calculate_confidence(screen_text, response)
-                    return self._format_response(response), confidence
+                    return self._format_response(response, agent_id), confidence
             except Exception as e:
                 logger.warning(f"Primary LLM provider {primary_provider} failed: {e}")
         
@@ -198,7 +198,7 @@ class LLMProcessor:
                     response = await self._query_llm(provider, user_prompt, system_prompt)
                     if response:
                         confidence = self._calculate_confidence(screen_text, response)
-                        return self._format_response(response), confidence
+                        return self._format_response(response, agent_id), confidence
                 except Exception as e:
                     logger.warning(f"Fallback LLM provider {provider} failed: {e}")
         
@@ -277,8 +277,45 @@ class LLMProcessor:
         
         return min(base_confidence, 1.0)
     
-    def _format_response(self, response: str) -> str:
-        """Ensure response follows ACTIVITY: format"""
+    def _format_response(self, response: str, agent_id: str = None) -> str:
+        """Format response based on agent type"""
+        # For Focus Assistant, extract human-readable message from JSON
+        if agent_id and 'focus-assistant' in agent_id:
+            try:
+                import json
+                import re
+                
+                # Extract JSON from response if it's wrapped
+                json_str = response
+                if response.startswith("ACTIVITY:"):
+                    json_str = response[9:].strip()
+                
+                # Find JSON in the string
+                if not json_str.startswith('{'):
+                    json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(0)
+                
+                # Parse and extract meaningful message
+                focus_data = json.loads(json_str)
+                activity = focus_data.get('activity', 'Unknown activity')
+                suggestion = focus_data.get('suggestion', '')
+                
+                # Create a clean, non-repetitive message
+                if suggestion:
+                    # Check if suggestion already mentions the activity to avoid repetition
+                    if activity.lower() in suggestion.lower():
+                        return f"ACTIVITY: {suggestion}"
+                    else:
+                        return f"ACTIVITY: {activity}. {suggestion}"
+                else:
+                    return f"ACTIVITY: {activity}"
+                    
+            except (json.JSONDecodeError, AttributeError):
+                # Fallback to original response if JSON parsing fails
+                pass
+        
+        # Default formatting for regular activity tracker
         if not response.startswith("ACTIVITY:"):
             return f"ACTIVITY: {response}"
         return response
@@ -707,8 +744,14 @@ class FocusAssistantAgent(ActivityTrackingAgent):
             
         except (json.JSONDecodeError, AttributeError) as e:
             logger.warning(f"Failed to parse focus JSON from: {result[:100]}... Error: {e}")
-            # Fallback to regular activity processing
-            return await super()._process_activity_result(result)
+            # Fallback - return basic activity structure
+            return {
+                'activity': result,
+                'focus_level': 'medium',
+                'productivity_score': 0.5,
+                'category': 'unknown',
+                'suggestion': 'Unable to parse focus data'
+            }
     
     def get_focus_summary(self) -> Dict[str, Any]:
         """Get current focus session summary"""
