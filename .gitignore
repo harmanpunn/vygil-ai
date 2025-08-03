@@ -2,6 +2,11 @@
 
 # Project documentation and temporary files
 CLAUDE.md
+.DS_Store
+node_modules/
+dist/
+.env
+.vscode/
 *.txt
 sofar.txt
 update_v1.txt
