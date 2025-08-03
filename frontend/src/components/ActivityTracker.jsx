@@ -3,8 +3,9 @@ import PermissionNotification from './PermissionNotification'
 import ControlPanel from './ControlPanel'
 import MetricsDisplay from './MetricsDisplay'
 import ActivityLog from './ActivityLog'
+import NotificationSystem from './NotificationSystem'
 
-const ActivityTracker = ({ onStatusChange }) => {
+const ActivityTracker = ({ onStatusChange, currentAgent }) => {
   const [isActive, setIsActive] = useState(false)
   const [activities, setActivities] = useState([])
   const [status, setStatus] = useState('Ready to begin insights')
@@ -12,6 +13,7 @@ const ActivityTracker = ({ onStatusChange }) => {
   const [nextCapture, setNextCapture] = useState(null)
   const [stream, setStream] = useState(null)
   const [error, setError] = useState(null)
+  const [focusSummary, setFocusSummary] = useState(null)
   
   const intervalRef = useRef(null)
   const sessionStartRef = useRef(null)
@@ -43,6 +45,30 @@ const ActivityTracker = ({ onStatusChange }) => {
     streamRef.current = stream
     console.log(`🎥 streamRef updated:`, { hasStream: !!stream })
   }, [stream])
+
+  // Fetch focus summary when using focus assistant
+  useEffect(() => {
+    const fetchFocusSummary = async () => {
+      if (currentAgent === 'vygil-focus-assistant' && isActive) {
+        try {
+          const response = await fetch('/api/focus/summary')
+          if (response.ok) {
+            const data = await response.json()
+            setFocusSummary(data.summary)
+          }
+        } catch (err) {
+          console.error('Failed to fetch focus summary:', err)
+        }
+      } else {
+        setFocusSummary(null)
+      }
+    }
+
+    // Fetch immediately and then every 30 seconds
+    fetchFocusSummary()
+    const interval = setInterval(fetchFocusSummary, 30000)
+    return () => clearInterval(interval)
+  }, [currentAgent, isActive])
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -531,6 +557,76 @@ const ActivityTracker = ({ onStatusChange }) => {
         sessionTime={sessionTime}
         nextCapture={nextCapture}
         formatTime={formatTime}
+      />
+      
+      {/* Focus Summary (only for focus assistant) */}
+      {currentAgent === 'vygil-focus-assistant' && focusSummary && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200/50">
+          <h3 className="text-lg font-semibold text-blue-900 mb-4 flex items-center gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+            Focus Session Summary
+          </h3>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-700">
+                {focusSummary.productivity_score?.toFixed(1) || '0.0'}
+              </div>
+              <div className="text-sm text-blue-600">Productivity Score</div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-700">
+                {focusSummary.focus_sessions || 0}
+              </div>
+              <div className="text-sm text-blue-600">Focus Sessions</div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-red-600">
+                {focusSummary.distractions || 0}
+              </div>
+              <div className="text-sm text-red-600">Distractions</div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {Math.round(focusSummary.total_focus_time / 60) || 0}m
+              </div>
+              <div className="text-sm text-green-600">Focus Time</div>
+            </div>
+          </div>
+          
+          {focusSummary.current_suggestion && (
+            <div className="mt-4 p-3 bg-white/80 rounded-lg border border-blue-200">
+              <div className="text-sm font-medium text-blue-900">💡 Suggestion:</div>
+              <div className="text-sm text-blue-800 mt-1">{focusSummary.current_suggestion}</div>
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* Agent-specific status display */}
+      {currentAgent && (
+        <div className="bg-primary-ghost/30 rounded-xl p-4 border border-primary-whisper/20">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-primary-dark">
+              Active Agent: {currentAgent === 'vygil-focus-assistant' ? 'Focus Assistant' : 'Activity Tracker'}
+            </span>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              <span className="text-sm text-primary-muted">
+                {isActive ? 'Monitoring' : 'Stopped'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification System - Focus Assistant only */}
+      <NotificationSystem 
+        currentAgent={currentAgent}
+        isActive={isActive}
       />
       
       {/* Activity Log */}

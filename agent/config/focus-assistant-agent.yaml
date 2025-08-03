@@ -1,0 +1,197 @@
+# Vygil Focus Assistant Agent Configuration
+
+agent:
+  name: "Vygil Focus Assistant"
+  id: "vygil-focus-assistant"
+  version: "1.0.0"
+  loop_interval: 30  # seconds between focus checks (more frequent)
+  max_retries: 3
+  timeout: 10  # seconds for each operation
+  
+instructions:
+  system_prompt: |
+    You are a focus assistant that helps users stay productive by monitoring their screen activity.
+    
+    Previous focus events for context:
+    $MEMORY
+    
+    Analyze the provided OCR text from the user's screen and determine their focus level and productivity.
+    
+    Respond with JSON format:
+    {
+      "focus_level": "high|medium|low",
+      "productivity_score": 0.0-1.0,
+      "category": "productive|neutral|distraction",
+      "suggestion": "brief helpful suggestion",
+      "activity": "brief description"
+    }
+    
+    Focus Categories:
+    
+    PRODUCTIVE (high focus, 0.7-1.0 score):
+    - Coding/Development (IDE, terminal, debugging, GitHub, documentation)
+    - Work Applications (spreadsheets, presentations, professional writing)
+    - Learning (educational content, tutorials, courses, reading documentation)
+    - Professional Communication (work emails, Slack for work, video meetings)
+    
+    NEUTRAL (medium focus, 0.4-0.6 score):
+    - File Management (organizing files, system settings)
+    - Quick Research (looking up work-related information)
+    - Brief Communication (checking messages, quick responses)
+    
+    DISTRACTION (low focus, 0.0-0.3 score):
+    - Social Media: Instagram, Facebook, Twitter, TikTok, Snapchat, Reddit browsing
+    - Entertainment: YouTube (non-educational), Netflix, gaming, music streaming
+    - Shopping: Online shopping, browsing products, deals
+    - News/Gossip: Celebrity news, random browsing, clickbait articles
+    
+    Key Distraction Indicators:
+    - Instagram: "instagram.com", stories, reels, explore page, likes, comments, DMs
+    - Facebook: "facebook.com", timeline, posts, messenger, groups
+    - Twitter: "twitter.com", timeline, trending, random scrolling
+    - TikTok: "tiktok.com", for you page, videos, endless scrolling
+    - YouTube: entertainment videos, vlogs, random recommendations
+    - Shopping: cart, prices, product pages, "buy now", deals
+    
+    Examples:
+    - Instagram browsing: {"focus_level": "low", "productivity_score": 0.1, "category": "distraction", "suggestion": "Consider taking a 5-minute break then returning to work", "activity": "Browsing Instagram"}
+    - Coding work: {"focus_level": "high", "productivity_score": 0.9, "category": "productive", "suggestion": "Great focus! Keep up the productive work", "activity": "Coding"}
+    - Work research: {"focus_level": "medium", "productivity_score": 0.6, "category": "neutral", "suggestion": "Focused research - make sure to apply what you learn", "activity": "Research"}
+    - Coding/Development (IDE, terminal, debugging)
+    - Work Documents (spreadsheets, presentations, reports)
+    - Learning (tutorials, documentation, courses)
+    - Communication (work emails, professional meetings)
+    
+    NEUTRAL:
+    - File management, system tasks
+    - Quick research or reference lookup
+    - Brief breaks (reasonable duration)
+    
+    DISTRACTION:
+    - Social media browsing
+    - Entertainment (games, videos, streaming)
+    - Personal browsing during work hours
+    - Extended non-work activities
+    
+    Suggestions Examples:
+    - "Great focus! Keep up the productive work."
+    - "Consider taking a 5-minute break to refresh."
+    - "You've been on social media for a while. Time to refocus?"
+    - "Excellent deep work session detected."
+    
+    Focus Levels:
+    - HIGH: Deep work, coding, writing, focused learning
+    - MEDIUM: Mixed activities, light multitasking
+    - LOW: Distractions, entertainment, social media
+
+mcp_server:
+  command: "node"
+  args: ["../mcp-server/dist/vygil-mcp-server.js"]
+  protocol: "stdio"
+  timeout: 30
+  tools:
+    extract_text:
+      name: "extract_text" 
+      description: "Performs OCR on captured screen content"
+    log_focus_event:
+      name: "log_focus_event"
+      description: "Stores focus assessment with timestamp"
+    get_focus_history:
+      name: "get_focus_history"
+      description: "Retrieves recent focus events for analysis"
+
+llm:
+  provider: "openai"
+  model: "gpt-4o-mini"
+  temperature: 0.2  # slightly higher for more nuanced responses
+  max_tokens: 200   # more tokens for JSON response
+  timeout: 15
+
+  fallback_providers:
+    - provider: "anthropic"
+      model: "claude-3-haiku-20240307"
+
+privacy:
+  screen_permission_required: true
+  user_consent_message: |
+    Vygil Focus Assistant needs screen recording permission to help you stay focused.
+    Your screen data is processed locally and only focus assessments are stored.
+  pause_monitoring_key: "Ctrl+Shift+F"  # Different hotkey for focus assistant
+  
+monitoring:
+  confidence_scoring: true
+  context_window: 10  # More context for focus patterns
+  adaptive_prompts: true  # Learn user's focus patterns
+  distraction_threshold: 3  # Number of distraction events before alert
+  
+focus_features:
+  productivity_tracking: true
+  distraction_alerts: true
+  focus_time_goals: true
+  break_reminders: true
+  daily_summary: true
+  
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/focus-assistant.log"
+  max_file_size: "10MB"
+  backup_count: 5
+
+error_handling:
+  max_consecutive_failures: 5
+  retry_delay: 2
+  graceful_shutdown: true
+  fallback_activity: "FOCUS: Unable to assess current activity"
+
+performance:
+  memory_limit: "512MB"
+  cpu_threshold: 80
+  health_check_interval: 180  # 3 minutes (more frequent)
+
+# Focus-specific memory for tracking patterns
+memory: ""
+
+# Autonomous code for focus tracking
+code: |
+  # Parse the JSON response from LLM
+  import json
+  try:
+      result = json.loads(activity_result)
+      focus_level = result.get('focus_level', 'unknown')
+      productivity_score = result.get('productivity_score', 0.0)
+      category = result.get('category', 'neutral')
+      suggestion = result.get('suggestion', '')
+      activity = result.get('activity', '')
+  except:
+      # Fallback if JSON parsing fails
+      focus_level = 'medium'
+      productivity_score = 0.5
+      category = 'neutral'
+      suggestion = 'Continue your current activity'
+      activity = activity_result
+  
+  # Store focus event in memory
+  memory = get_memory()
+  timestamp = get_current_time()
+  focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | {activity}"
+  
+  # Update memory with focus tracking
+  updated_memory = memory + "\n" + focus_entry if memory else focus_entry
+  
+  # Keep only last 20 entries to prevent memory bloat
+  lines = updated_memory.split('\n')
+  if len(lines) > 20:
+      updated_memory = '\n'.join(lines[-20:])
+  
+  update_memory(updated_memory)
+  
+  # Store additional focus metrics
+  store_focus_metrics({
+      'timestamp': timestamp,
+      'focus_level': focus_level,
+      'productivity_score': productivity_score,
+      'category': category,
+      'suggestion': suggestion,
+      'activity': activity
+  })
