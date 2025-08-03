@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MCP OCR Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        button { margin: 5px; padding: 8px 16px; }
+        #screenshot { max-width: 800px; border: 1px solid #ccc; margin-top: 10px; }
+        #ocrText { width: 100%; height: 200px; font-family: monospace; margin-top: 10px; }
+        #log { height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>MCP OCR Test</h1>
+    
+    <div>
+        <button id="connectBtn">Connect</button>
+        <button id="createSessionBtn">Create Session</button>
+        <input id="sessionIdInput" placeholder="Session ID" style="width: 250px;">
+        <button id="joinSessionBtn">Join Session</button>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        <button id="captureBtn">Capture Screenshot</button>
+        <button id="sendCaptureBtn">Send to Server with OCR</button>
+    </div>
+    
+    <div>
+        <h3>Screenshot:</h3>
+        <canvas id="screenshotCanvas" style="display:none;"></canvas>
+        <img id="screenshot" alt="No screenshot available">
+    </div>
+    
+    <div>
+        <h3>OCR Result:</h3>
+        <textarea id="ocrText" readonly placeholder="OCR text will appear here"></textarea>
+    </div>
+    
+    <div>
+        <h3>Log:</h3>
+        <pre id="log"></pre>
+    </div>
+
+    <script>
+        let socket;
+        let currentSessionId;
+        const log = document.getElementById('log');
+        const screenshot = document.getElementById('screenshot');
+        const ocrText = document.getElementById('ocrText');
+        const canvas = document.getElementById('screenshotCanvas');
+        
+        function logMessage(message) {
+            const time = new Date().toLocaleTimeString();
+            log.innerHTML += `[${time}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        document.getElementById('connectBtn').addEventListener('click', () => {
+            socket = io('http://localhost:3000');
+            
+            socket.on('connect', () => {
+                logMessage(`Connected to server with ID: ${socket.id}`);
+            });
+            
+            socket.on('disconnect', () => {
+                logMessage('Disconnected from server');
+            });
+            
+            socket.on('session-created', (data) => {
+                currentSessionId = data.sessionId;
+                document.getElementById('sessionIdInput').value = currentSessionId;
+                logMessage(`Session created with ID: ${currentSessionId}`);
+            });
+            
+            socket.on('session-joined', (data) => {
+                currentSessionId = data.sessionId;
+                logMessage(`Joined session: ${currentSessionId}`);
+            });
+            
+            socket.on('ocr-result', (data) => {
+                logMessage(`Received OCR result (${data.text.length} chars)`);
+                ocrText.value = data.text;
+            });
+            
+            socket.on('error', (data) => {
+                logMessage(`Error: ${data.message}`);
+            });
+        });
+        
+        document.getElementById('createSessionBtn').addEventListener('click', () => {
+            if (!socket) {
+                logMessage('Connect to the server first');
+                return;
+            }
+            socket.emit('create-session');
+        });
+        
+        document.getElementById('joinSessionBtn').addEventListener('click', () => {
+            if (!socket) {
+                logMessage('Connect to the server first');
+                return;
+            }
+            const sessionId = document.getElementById('sessionIdInput').value;
+            if (!sessionId) {
+                logMessage('Enter a session ID first');
+                return;
+            }
+            socket.emit('join-session', { sessionId });
+        });
+        
+        document.getElementById('captureBtn').addEventListener('click', async () => {
+            try {
+                // Request screen capture from the browser
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { 
+                        cursor: "always",
+                        displaySurface: "monitor"
+                    }
+                });
+                
+                // Get the video track
+                const track = stream.getVideoTracks()[0];
+                
+                // Create a video element to capture a frame
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+                
+                // Capture a frame after a small delay
+                setTimeout(() => {
+                    // Set canvas dimensions to match video
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    // Draw the current frame to canvas
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Convert canvas to image
+                    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                    screenshot.src = imageData;
+                    
+                    // Stop the tracks
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    logMessage(`Screenshot captured (${canvas.width}x${canvas.height})`);
+                }, 300);
+                
+            } catch (error) {
+                logMessage(`Error capturing screenshot: ${error.message}`);
+            }
+        });
+        
+        document.getElementById('sendCaptureBtn').addEventListener('click', () => {
+            if (!socket || !currentSessionId) {
+                logMessage('Need to be in a session first');
+                return;
+            }
+            
+            if (!screenshot.src || screenshot.src === '') {
+                logMessage('Capture a screenshot first');
+                return;
+            }
+            
+            // Send the screenshot to the server for OCR
+            socket.emit('screen-data', { 
+                sessionId: currentSessionId,
+                chunk: {
+                    type: 'full',
+                    data: screenshot.src,
+                    timestamp: Date.now(),
+                    dimensions: {
+                        width: canvas.width,
+                        height: canvas.height
+                    }
+                }
+            });
+            
+            logMessage('Screenshot sent to server for OCR processing');
+        });
+    </script>
+</body>
+</html>
