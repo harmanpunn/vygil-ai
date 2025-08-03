@@ -31,10 +31,54 @@ export enum MCPMessageType {
   SCREEN_CAPTURE_STARTED = 'screen-capture-started',
   STOP_SCREEN_CAPTURE = 'stop-screen-capture',
   SCREEN_CAPTURE_STOPPED = 'screen-capture-stopped',
-  ERROR = 'error'
+  ERROR = 'error',
+  
+  // New agent-specific types
+  AGENT_REGISTER = 'agent-register',
+  AGENT_REGISTERED = 'agent-registered',
+  AGENT_REQUEST_OCR = 'agent-request-ocr',
+  AGENT_OCR_RESULT = 'agent-ocr-result',
+  AGENT_REQUEST_SCREEN = 'agent-request-screen',
+  AGENT_SCREEN_RESULT = 'agent-screen-result'
 }
 
 export interface MCPMessage {
   type: MCPMessageType;
   payload: any;
+}
+
+// New agent-specific interfaces
+export interface MCPAgentRegistration {
+  agentId: string;
+  capabilities?: string[];
+}
+
+export interface MCPAgentOCRRequest {
+  agentId: string;
+  imageData: string;  // Base64 encoded image
+  options?: {
+    language?: string;
+  };
+}
+
+export interface MCPAgentOCRResult {
+  agentId: string;
+  text: string;
+  confidence?: number;
+  timestamp: number;
+  processingTimeMs: number;
+}
+
+export interface MCPAgentScreenRequest {
+  agentId: string;
+}
+
+export interface MCPAgentScreenResult {
+  agentId: string;
+  imageData: string;
+  timestamp: number;
+  dimensions: {
+    width: number;
+    height: number;
+  };
 }

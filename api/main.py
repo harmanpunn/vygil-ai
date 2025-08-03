@@ -31,7 +31,8 @@ load_dotenv()
 # Add agent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 
-from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
+from agent import ConfigLoader, LLMProcessor, execute_autonomous_code
+from mcp_websocket_agent import MCPWebSocketAgent  # Use WebSocket agent instead
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -103,10 +104,16 @@ async def startup_event():
         # Initialize LLM processor
         llm_processor = LLMProcessor(config)
         
-        # Initialize MCP client
-        mcp_client = MCPClient(config)
+        # Initialize MCP WebSocket client instead of REST client
+        mcp_client = MCPWebSocketAgent(
+            agent_id="vygil-backend-api",
+            server_url="http://localhost:3000"
+        )
         
-        logger.info("Vygil API server started successfully")
+        # Connect to WebSocket server
+        await mcp_client.connect()
+        
+        logger.info("Vygil API server started successfully with WebSocket MCP client")
         
     except Exception as e:
         logger.error(f"Failed to initialize server: {e}")
@@ -130,59 +137,48 @@ async def process_activity(request: ActivityRequest):
         if not llm_processor or not mcp_client:
             raise HTTPException(status_code=503, detail="Server not ready")
         
-        # Decode base64 image (for future OCR processing)
+        # Decode base64 image (for validation)
         try:
             image_data = base64.b64decode(request.image)
             logger.info(f"Received image data: {len(image_data)} bytes")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}")
         
-        # Send image to MCP REST API server for OCR processing
-        logger.info("🔤 Sending image to MCP REST API server for OCR processing...")
-        mcp_api_host = os.getenv("MCP_SERVER_HOST", "localhost")
-        mcp_api_port = os.getenv("MCP_API_PORT", "3001")  # REST API runs on 3001
+        # Send image to MCP WebSocket server for OCR processing
+        logger.info("🔤 Sending image to MCP WebSocket server for OCR processing...")
         
         extracted_text = ""
         ocr_confidence = 0.0
         
         try:
-            # Prepare image data for MCP server (ensure proper format)
+            # Prepare image data for WebSocket MCP server (ensure proper format)
             image_base64 = request.image if request.image.startswith('data:') else f"data:image/png;base64,{request.image}"
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Call MCP REST API server OCR endpoint
-                logger.info(f"📞 Calling MCP API: http://{mcp_api_host}:{mcp_api_port}/api/ocr")
+            # Call WebSocket MCP server OCR
+            logger.info("📞 Calling MCP WebSocket server for OCR")
+            
+            ocr_result = await mcp_client.request_ocr(image_base64)
+            
+            if ocr_result.get("success"):
+                extracted_text = ocr_result.get("text", "").strip()
+                ocr_confidence = ocr_result.get("confidence", 0.0)
+                processing_time = ocr_result.get("processing_time_ms", 0)
                 
-                ocr_response = await client.post(
-                    f"http://{mcp_api_host}:{mcp_api_port}/api/ocr",
-                    json={"imageData": image_base64},
-                    headers={"Content-Type": "application/json"}
-                )
+                logger.info(f"✅ OCR successful via WebSocket:")
+                logger.info(f"   - Text length: {len(extracted_text)} characters")
+                logger.info(f"   - Confidence: {ocr_confidence:.2f}")
+                logger.info(f"   - Processing time: {processing_time}ms")
+                logger.info(f"   - Preview: \"{extracted_text[:100]}{'...' if len(extracted_text) > 100 else ''}\"")
                 
-                if ocr_response.status_code == 200:
-                    ocr_result = ocr_response.json()
-                    if ocr_result.get("success"):
-                        extracted_text = ocr_result.get("text", "").strip()
-                        ocr_confidence = ocr_result.get("confidence", 0.0)
-                        processing_time = ocr_result.get("processingTime", 0)
-                        
-                        logger.info(f"✅ OCR successful:")
-                        logger.info(f"   - Text length: {len(extracted_text)} characters")
-                        logger.info(f"   - Confidence: {ocr_confidence:.2f}")
-                        logger.info(f"   - Processing time: {processing_time}ms")
-                        logger.info(f"   - Preview: \"{extracted_text[:100]}{'...' if len(extracted_text) > 100 else ''}\"")
-                        
-                        # If OCR returned empty or very short text, use a fallback
-                        if len(extracted_text.strip()) < 10:
-                            logger.warning("⚠️ OCR returned minimal text, using fallback")
-                            extracted_text = "Desktop interface with minimal visible text content"
-                    else:
-                        raise Exception(f"OCR failed: {ocr_result.get('error', 'Unknown error')}")
-                else:
-                    raise Exception(f"MCP server returned {ocr_response.status_code}: {ocr_response.text}")
+                # If OCR returned empty or very short text, use a fallback
+                if len(extracted_text.strip()) < 10:
+                    logger.warning("⚠️ OCR returned minimal text, using fallback")
+                    extracted_text = "Desktop interface with minimal visible text content"
+            else:
+                raise Exception(f"WebSocket OCR failed: {ocr_result.get('error', 'Unknown error')}")
                     
         except Exception as e:
-            logger.warning(f"⚠️ MCP server OCR failed, using fallback: {e}")
+            logger.warning(f"⚠️ MCP WebSocket server OCR failed, using fallback: {e}")
             # Fallback to enhanced mock if MCP server is unavailable
             import random
             fallback_texts = [

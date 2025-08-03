@@ -1,30 +1,42 @@
 import express from 'express';
-import http from 'http';
-import { Server, Socket } from 'socket.io';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import { Request, Response } from 'express';
 import { config } from './config';
-import { MCPSession, MCPScreenChunk, MCPMessageType } from './types/protocol';
+import { MCPSession, MCPScreenChunk, MCPMessageType, MCPAgentRegistration, MCPAgentOCRRequest, MCPAgentScreenRequest } from './types/protocol';
 import Tesseract from 'tesseract.js';
 
 // Initialize app and server
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: config.server.cors
-});
+const server = createServer(app);
 
-// Use middleware
-app.use(cors());
+// Enable CORS for all routes
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  credentials: true
+}));
+
 app.use(express.json());
 
 // Store active sessions
 const activeSessions: Record<string, MCPSession> = {};
 
 // Socket.IO connection handling
-io.on('connection', (socket: Socket) => {
-  console.log(`New connection: ${socket.id}`);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
+});
+
+io.on('connection', (socket) => {
+  console.log(`✅ New client connected: ${socket.id}`);
 
   // Handle screen sharing session creation
   socket.on('create-session', () => {
@@ -153,9 +165,131 @@ io.on('connection', (socket: Socket) => {
     }
   });
 
+  // Handle agent registration
+  socket.on(MCPMessageType.AGENT_REGISTER, (data: MCPAgentRegistration) => {
+    const { agentId } = data;
+    console.log(`Agent registered: ${agentId}`);
+    
+    socket.emit(MCPMessageType.AGENT_REGISTERED, { 
+      agentId, 
+      timestamp: Date.now(),
+      status: 'registered',
+      serverCapabilities: ['ocr', 'screen-sharing']
+    });
+  });
+
+  // Handle OCR requests from agents
+  socket.on(MCPMessageType.AGENT_REQUEST_OCR, async (data: MCPAgentOCRRequest) => {
+    const { agentId, imageData, options = {} } = data;
+    const startTime = Date.now();
+    
+    try {
+      console.log(`Processing OCR request from agent ${agentId}`);
+      
+      // Extract base64 image data
+      const parts = imageData.split(',');
+      const base64Data = parts.length > 1 ? parts[1] : parts[0];
+      
+      if (!base64Data) {
+        socket.emit(MCPMessageType.ERROR, { 
+          message: 'Invalid image data',
+          agentId
+        });
+        return;
+      }
+      
+      // Convert base64 to buffer for Tesseract
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      
+      // Perform OCR
+      const result = await Tesseract.recognize(
+        imageBuffer,
+        options.language || 'eng',
+        { 
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              console.log(`OCR Progress for ${agentId}: ${Math.round(m.progress * 100)}%`);
+            }
+          }
+        }
+      );
+      
+      const extractedText = result.data.text;
+      const processingTime = Date.now() - startTime;
+      
+      console.log(`OCR completed for agent ${agentId}, text length: ${extractedText.length} chars, took ${processingTime}ms`);
+      
+      // Send OCR result back to the agent
+      socket.emit(MCPMessageType.AGENT_OCR_RESULT, {
+        agentId,
+        text: extractedText,
+        confidence: result.data.confidence / 100, // Convert to 0-1 scale
+        timestamp: Date.now(),
+        processingTimeMs: processingTime
+      });
+      
+    } catch (error) {
+      console.error(`OCR error for agent ${agentId}:`, error);
+      socket.emit(MCPMessageType.ERROR, { 
+        message: 'Failed to perform OCR',
+        agentId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  });
+
+  // Handle screen capture requests from agents
+  socket.on(MCPMessageType.AGENT_REQUEST_SCREEN, (data: MCPAgentScreenRequest) => {
+    const { agentId } = data;
+    
+    console.log(`Agent ${agentId} requested screen capture`);
+    
+    // We need to notify a client to capture the screen
+    const sessionIds = Object.keys(activeSessions);
+    if (sessionIds.length > 0) {
+      // Use a non-null assertion or type assertion since we've checked length > 0
+      const sessionId = sessionIds[0] as string; // This tells TypeScript that we know it's a string
+      
+      const session = activeSessions[sessionId];
+      
+      if (session) {
+        // Send request to session host
+        io.to(session.host).emit('request-screenshot-for-agent', { 
+          agentId,
+          sessionId
+        });
+      } else {
+        socket.emit(MCPMessageType.ERROR, {
+          message: 'Session not found',
+          agentId
+        });
+      }
+    } else {
+      socket.emit(MCPMessageType.ERROR, {
+        message: 'No active screen sharing sessions available',
+        agentId
+      });
+    }
+  });
+
+  // Handle screenshot data from client (to be forwarded to agent)
+  socket.on('screenshot-for-agent', (data: { agentId: string, imageData: string, dimensions: { width: number, height: number } }) => {
+    const { agentId, imageData, dimensions } = data;
+    
+    // Find the socket for the agent
+    // In a real implementation, you would store agent socket IDs
+    // For this example, we'll just forward it to the requesting socket
+    socket.emit(MCPMessageType.AGENT_SCREEN_RESULT, {
+      agentId,
+      imageData,
+      timestamp: Date.now(),
+      dimensions
+    });
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
-    console.log(`Disconnected: ${socket.id}`);
+    console.log(`❌ Client disconnected: ${socket.id}`);
     
     // Clean up sessions if host disconnects
     for (const sessionId in activeSessions) {
@@ -182,10 +316,27 @@ app.get('/api/sessions', (req: Request, res: Response) => {
   res.json({ sessions: Object.keys(activeSessions) });
 });
 
+app.get('/', (req, res) => {
+  res.json({
+    message: 'MCP WebSocket Server',
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'MCP WebSocket Server',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Start the server
 const PORT = config.server.port;
 server.listen(PORT, () => {
-  console.log(`MCP Server running on port ${PORT}`);
+  console.log(`🚀 MCP Server running on port ${PORT}`);
+  console.log(`📡 WebSocket server ready for connections`);
 });
 
 // Export for testing or other uses

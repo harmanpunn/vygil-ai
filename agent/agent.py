@@ -6,18 +6,20 @@ Simple AI agent that monitors screen activity using MCP server tools.
 Follows the MVP flow: screen capture → OCR → LLM analysis → activity logging
 """
 
+import uuid
 import asyncio
-import json
 import logging
-import os
+import json
 import time
+import os
 from datetime import datetime
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Any, Optional, List, Tuple
 import yaml
 from pathlib import Path
 
 # Third-party imports
 from dotenv import load_dotenv
+import socketio
 
 # Load environment variables
 load_dotenv()
@@ -284,35 +286,111 @@ class LLMProcessor:
 
 
 class MCPClient:
-    """MCP client for communicating with MCP server tools"""
+    """MCP client for communicating with MCP server tools using WebSockets"""
     
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.mcp_config = config.get('mcp_server', {})
-        self.host = self.mcp_config.get('host', 'localhost')
-        self.port = self.mcp_config.get('port', 3000)
-        self.timeout = self.mcp_config.get('timeout', 5)
+    def __init__(self, config, agent_id: str = None):
+        """Initialize MCP client"""
+        # Handle both dict config and direct server_url
+        if isinstance(config, dict):
+            self.server_url = config.get("mcp_server_url", "http://localhost:3000")
+        else:
+            # If config is a string, treat it as server_url
+            self.server_url = config
+            
+        self.agent_id = agent_id or f"agent-{uuid.uuid4()}"
+        self.sio = socketio.AsyncClient()
+        self.connected = False
+        self.pending_requests = {}
         
+        # Set up event handlers
+        self.sio.on("connect", self._on_connect)
+        self.sio.on("disconnect", self._on_disconnect)
+        self.sio.on("agent-registered", self._on_agent_registered)
+        self.sio.on("agent-ocr-result", self._on_ocr_result)
+        self.sio.on("agent-screen-result", self._on_screen_result)
+        self.sio.on("error", self._on_error)
+        
+        logger.info(f"MCP client initialized with ID {self.agent_id}")
+    
+    async def connect(self):
+        """Connect to MCP server"""
+        if not self.connected:
+            try:
+                await self.sio.connect(self.server_url)
+                await self.sio.emit("agent-register", {
+                    "agentId": self.agent_id,
+                    "capabilities": ["ocr"]
+                })
+                return True
+            except Exception as e:
+                logger.error(f"Failed to connect to MCP server: {e}")
+                return False
+        return True
+    
+    async def disconnect(self):
+        """Disconnect from MCP server"""
+        if self.connected:
+            await self.sio.disconnect()
+    
     async def call_tool(self, tool_name: str, arguments: Dict = None) -> Dict[str, Any]:
         """
-        Call MCP server tool
-        For MVP: simplified HTTP client implementation
+        Call MCP server tool using WebSockets
         """
         if arguments is None:
             arguments = {}
             
         try:
-            # For MVP: Mock implementation until MCP server is ready
-            # In production, this would make actual HTTP/stdio calls to MCP server
+            # Make sure we're connected
+            if not self.connected:
+                await self.connect()
+                if not self.connected:
+                    return {"success": False, "error": "Failed to connect to MCP server"}
+            
+            # Generate a unique request ID
+            request_id = str(uuid.uuid4())
+            future = asyncio.Future()
+            self.pending_requests[request_id] = future
             
             if tool_name == "screen_capture":
-                return await self._mock_screen_capture()
+                # Request screenshot using WebSockets
+                await self.sio.emit("agent-request-screen", {
+                    "agentId": self.agent_id,
+                    "requestId": request_id
+                })
+                
+                # Wait for result
+                try:
+                    result = await asyncio.wait_for(future, timeout=30.0)
+                    return {
+                        "success": True,
+                        "image_base64": result.get("imageData", "")
+                    }
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+                
             elif tool_name == "extract_text":
-                return await self._mock_extract_text(arguments)
-            elif tool_name == "log_activity":
-                return await self._mock_log_activity(arguments)
-            elif tool_name == "get_recent_activities":
-                return await self._mock_get_recent_activities(arguments)
+                # Get image data from arguments
+                image_data = arguments.get("image_data")
+                if not image_data:
+                    return {"success": False, "error": "Image data required"}
+                
+                # Request OCR using WebSockets
+                await self.sio.emit("agent-request-ocr", {
+                    "agentId": self.agent_id,
+                    "requestId": request_id,
+                    "imageData": image_data
+                })
+                
+                # Wait for result
+                try:
+                    result = await asyncio.wait_for(future, timeout=30.0)
+                    return {
+                        "success": True,
+                        "text": result.get("text", ""),
+                        "confidence": result.get("confidence", 0)
+                    }
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
             else:
                 return {"success": False, "error": f"Unknown tool: {tool_name}"}
                 
@@ -320,68 +398,38 @@ class MCPClient:
             logger.error(f"MCP tool call failed for {tool_name}: {e}")
             return {"success": False, "error": str(e)}
     
-    async def _mock_screen_capture(self) -> Dict[str, Any]:
-        """Mock screen capture for MVP testing"""
-        logger.debug("Mock screen capture called")
-        return {
-            "success": True,
-            "image_base64": "mock_base64_image_data",
-            "timestamp": datetime.now().isoformat()
-        }
+    # Socket.IO event handlers
+    async def _on_connect(self):
+        self.connected = True
+        logger.info("Connected to MCP server")
     
-    async def _mock_extract_text(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock OCR text extraction for MVP testing"""
-        logger.debug("Mock OCR extraction called")
-        
-        # Simulate different screen content for testing
-        mock_texts = [
-            "VS Code - Python development environment with terminal open",
-            "Chrome browser - reading technical documentation on GitHub",
-            "Slack conversation about project updates and team coordination",
-            "Excel spreadsheet with quarterly financial data and charts",
-            "Zoom video call - team standup meeting in progress",
-            "Terminal window running git commands and code compilation",
-            "Email client composing message to client about project status"
-        ]
-        
-        import random
-        mock_text = random.choice(mock_texts)
-        
-        return {
-            "success": True,
-            "text": mock_text,
-            "confidence": 0.85,
-            "timestamp": datetime.now().isoformat()
-        }
+    async def _on_disconnect(self):
+        self.connected = False
+        logger.info("Disconnected from MCP server")
     
-    async def _mock_log_activity(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock activity logging for MVP testing"""
-        description = arguments.get('description', 'Unknown activity')
-        confidence = arguments.get('confidence', 0.0)
-        
-        logger.info(f"Activity logged: {description} (confidence: {confidence:.2f})")
-        
-        return {
-            "success": True,
-            "logged_at": datetime.now().isoformat(),
-            "activity_id": f"activity_{int(time.time())}"
-        }
+    async def _on_agent_registered(self, data):
+        logger.info(f"Agent registered with server: {data}")
     
-    async def _mock_get_recent_activities(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock recent activities retrieval for MVP testing"""
-        limit = arguments.get('limit', 5)
-        
-        mock_activities = [
-            {"timestamp": "2024-01-01T10:30:00", "description": "ACTIVITY: Coding in Python"},
-            {"timestamp": "2024-01-01T10:25:00", "description": "ACTIVITY: Reading documentation"},
-            {"timestamp": "2024-01-01T10:20:00", "description": "ACTIVITY: Email communication"},
-        ]
-        
-        return {
-            "success": True,
-            "activities": mock_activities[:limit],
-            "total_count": len(mock_activities)
-        }
+    async def _on_ocr_result(self, data):
+        request_id = data.get('requestId')
+        if request_id in self.pending_requests:
+            future = self.pending_requests.pop(request_id)
+            future.set_result(data)
+        logger.info(f"Received OCR result: {len(data['text'])} chars")
+    
+    async def _on_screen_result(self, data):
+        request_id = data.get('requestId')
+        if request_id in self.pending_requests:
+            future = self.pending_requests.pop(request_id)
+            future.set_result(data)
+        logger.info(f"Received screen capture: {len(data['imageData'])} bytes")
+    
+    async def _on_error(self, data):
+        request_id = data.get('requestId')
+        if request_id in self.pending_requests:
+            future = self.pending_requests.pop(request_id)
+            future.set_exception(Exception(data.get('message', 'Unknown error')))
+        logger.error(f"Error from MCP server: {data.get('message')}")
 
 
 class ActivityTrackingAgent:
@@ -394,7 +442,12 @@ class ActivityTrackingAgent:
         
         # Initialize components
         self.llm_processor = LLMProcessor(self.config)
-        self.mcp_client = MCPClient(self.config)
+        
+        # Initialize MCP client with WebSocket connection
+        self.mcp_client = MCPClient(
+            config=self.config,  # Pass the full config dict
+            agent_id=self.agent_id
+        )
         
         # Agent state
         self.running = False
@@ -430,6 +483,11 @@ class ActivityTrackingAgent:
         self.start_time = datetime.now()
         
         try:
+            # Connect to MCP server
+            connected = await self.mcp_client.connect()
+            if not connected:
+                logger.error("Failed to connect to MCP server, falling back to mock mode")
+            
             while self.running:
                 await self._execute_monitoring_cycle()
                 
