@@ -22,6 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add agent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
@@ -202,8 +206,9 @@ async def clear_activities():
 async def save_screenshot(request: ScreenshotRequest):
     """Save screenshot to local directory for reference"""
     try:
-        # Create screenshots directory if it doesn't exist
-        screenshots_dir = Path("/Users/harman/Home/Projects/vygil-ai/screenshots")
+        # Get screenshots directory from environment variable
+        screenshots_path = os.getenv("SCREENSHOTS_DIR", "./screenshots")
+        screenshots_dir = Path(screenshots_path).resolve()
         screenshots_dir.mkdir(exist_ok=True)
         
         # Decode base64 image
