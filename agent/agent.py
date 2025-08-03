@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, List
 import yaml
 from pathlib import Path
 
@@ -238,6 +238,7 @@ class LLMProcessor:
             temperature=self.llm_config.get('temperature', 0.1),
             timeout=self.llm_config.get('timeout', 10)
         )
+        logger.info(f"OpenAI response: {response.choices[0].message.content.strip()}")
         return response.choices[0].message.content.strip()
     
     async def _query_anthropic(self, user_prompt: str, system_prompt: str = "") -> str:
@@ -284,104 +285,194 @@ class LLMProcessor:
 
 
 class MCPClient:
-    """MCP client for communicating with MCP server tools"""
+    """True MCP client implementing JSON-RPC 2.0 over stdio"""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.mcp_config = config.get('mcp_server', {})
-        self.host = self.mcp_config.get('host', 'localhost')
-        self.port = self.mcp_config.get('port', 3000)
-        self.timeout = self.mcp_config.get('timeout', 5)
+        self.command = self.mcp_config.get('command', 'node')
+        self.args = self.mcp_config.get('args', ['../mcp-server/dist/vygil-mcp-server.js'])
+        self.timeout = self.mcp_config.get('timeout', 30)
+        self.is_initialized = False
+        self.request_id = 0
+        self.process = None
         
+    def _next_request_id(self) -> int:
+        """Generate unique request ID"""
+        self.request_id += 1
+        return self.request_id
+        
+    async def _send_mcp_request(self, method: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """Send JSON-RPC 2.0 request to MCP server via stdio"""
+        import subprocess
+        import json
+        
+        request_id = self._next_request_id()
+        
+        # Construct JSON-RPC 2.0 request
+        rpc_request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method
+        }
+        
+        if params is not None:
+            rpc_request["params"] = params
+            
+        try:
+            # Start MCP server process if not already running
+            if self.process is None or self.process.returncode is not None:
+                logger.debug(f"Starting MCP server: {self.command} {' '.join(self.args)}")
+                self.process = await asyncio.create_subprocess_exec(
+                    self.command, *self.args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                # Give the server a moment to start up
+                await asyncio.sleep(0.5)
+                
+                # Read any startup messages from stderr
+                try:
+                    startup_msg = await asyncio.wait_for(
+                        self.process.stderr.readline(),
+                        timeout=2.0
+                    )
+                    if startup_msg:
+                        logger.debug(f"MCP server startup: {startup_msg.decode().strip()}")
+                except asyncio.TimeoutError:
+                    pass  # No startup message, continue
+            
+            # Send request
+            request_json = json.dumps(rpc_request) + '\n'
+            logger.debug(f"Sending MCP request: {method} -> {request_json.strip()}")
+            
+            self.process.stdin.write(request_json.encode())
+            await self.process.stdin.drain()
+            
+            # Read response with detailed logging
+            logger.debug(f"Waiting for MCP response (timeout: {self.timeout}s)")
+            response_line = await asyncio.wait_for(
+                self.process.stdout.readline(),
+                timeout=self.timeout
+            )
+            
+            logger.debug(f"MCP response received: {response_line.decode().strip() if response_line else 'No response'}")
+            
+            if not response_line:
+                raise Exception("No response from MCP server")
+            
+            result = json.loads(response_line.decode().strip())
+            
+            # Validate JSON-RPC response
+            if result.get("jsonrpc") != "2.0" or result.get("id") != request_id:
+                logger.error(f"Invalid JSON-RPC response: {result}")
+                return {"success": False, "error": "Invalid JSON-RPC response"}
+            
+            # Check for errors
+            if "error" in result:
+                error = result["error"]
+                logger.error(f"MCP server error: {error}")
+                return {"success": False, "error": error.get("message", "Unknown error")}
+            
+            # Return successful result
+            return {"success": True, "data": result.get("result", {})}
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"MCP request timeout after {self.timeout}s")
+            return {"success": False, "error": "Request timeout"}
+        except Exception as e:
+            logger.error(f"MCP request failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def initialize(self) -> bool:
+        """Initialize MCP connection"""
+        if self.is_initialized:
+            return True
+            
+        logger.info("Initializing MCP connection...")
+        
+        response = await self._send_mcp_request("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "Vygil Activity Agent",
+                "version": "1.0.0"
+            }
+        })
+        
+        if response.get("success"):
+            self.is_initialized = True
+            logger.info("✅ MCP connection initialized successfully")
+            return True
+        else:
+            logger.error(f"❌ MCP initialization failed: {response.get('error')}")
+            return False
+    
+    async def list_tools(self) -> List[Dict[str, Any]]:
+        """List available tools from MCP server"""
+        if not self.is_initialized:
+            await self.initialize()
+            
+        response = await self._send_mcp_request("tools/list")
+        
+        if response.get("success"):
+            tools = response.get("data", {}).get("tools", [])
+            logger.info(f"📋 Found {len(tools)} available tools")
+            return tools
+        else:
+            logger.error(f"Failed to list tools: {response.get('error')}")
+            return []
+    
     async def call_tool(self, tool_name: str, arguments: Dict = None) -> Dict[str, Any]:
-        """
-        Call MCP server tool
-        For MVP: simplified HTTP client implementation
-        """
+        """Call MCP server tool using JSON-RPC 2.0"""
         if arguments is None:
             arguments = {}
             
-        try:
-            # For MVP: Mock implementation until MCP server is ready
-            # In production, this would make actual HTTP/stdio calls to MCP server
+        # Ensure MCP connection is initialized
+        if not self.is_initialized:
+            init_success = await self.initialize()
+            if not init_success:
+                return {"success": False, "error": "Failed to initialize MCP connection"}
+        
+        logger.debug(f"Calling MCP tool: {tool_name} with args: {arguments}")
+        
+        # Send tools/call request
+        response = await self._send_mcp_request("tools/call", {
+            "name": tool_name,
+            "arguments": arguments
+        })
+        
+        if response.get("success"):
+            # Extract result from MCP response format
+            data = response.get("data", {})
+            content = data.get("content", [])
             
-            if tool_name == "screen_capture":
-                return await self._mock_screen_capture()
-            elif tool_name == "extract_text":
-                return await self._mock_extract_text(arguments)
-            elif tool_name == "log_activity":
-                return await self._mock_log_activity(arguments)
-            elif tool_name == "get_recent_activities":
-                return await self._mock_get_recent_activities(arguments)
+            if content and len(content) > 0:
+                # Parse the text content (which contains JSON)
+                try:
+                    import json
+                    result_text = content[0].get("text", "{}")
+                    parsed_result = json.loads(result_text)
+                    
+                    # Return in expected format
+                    return {
+                        "success": parsed_result.get("success", True),
+                        **parsed_result
+                    }
+                except json.JSONDecodeError:
+                    # Fallback if parsing fails
+                    return {
+                        "success": True,
+                        "result": result_text
+                    }
             else:
-                return {"success": False, "error": f"Unknown tool: {tool_name}"}
-                
-        except Exception as e:
-            logger.error(f"MCP tool call failed for {tool_name}: {e}")
-            return {"success": False, "error": str(e)}
-    
-    async def _mock_screen_capture(self) -> Dict[str, Any]:
-        """Mock screen capture for MVP testing"""
-        logger.debug("Mock screen capture called")
-        return {
-            "success": True,
-            "image_base64": "mock_base64_image_data",
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    async def _mock_extract_text(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock OCR text extraction for MVP testing"""
-        logger.debug("Mock OCR extraction called")
-        
-        # Simulate different screen content for testing
-        mock_texts = [
-            "VS Code - Python development environment with terminal open",
-            "Chrome browser - reading technical documentation on GitHub",
-            "Slack conversation about project updates and team coordination",
-            "Excel spreadsheet with quarterly financial data and charts",
-            "Zoom video call - team standup meeting in progress",
-            "Terminal window running git commands and code compilation",
-            "Email client composing message to client about project status"
-        ]
-        
-        import random
-        mock_text = random.choice(mock_texts)
-        
-        return {
-            "success": True,
-            "text": mock_text,
-            "confidence": 0.85,
-            "timestamp": datetime.now().isoformat()
-        }
-    
-    async def _mock_log_activity(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock activity logging for MVP testing"""
-        description = arguments.get('description', 'Unknown activity')
-        confidence = arguments.get('confidence', 0.0)
-        
-        logger.info(f"Activity logged: {description} (confidence: {confidence:.2f})")
-        
-        return {
-            "success": True,
-            "logged_at": datetime.now().isoformat(),
-            "activity_id": f"activity_{int(time.time())}"
-        }
-    
-    async def _mock_get_recent_activities(self, arguments: Dict) -> Dict[str, Any]:
-        """Mock recent activities retrieval for MVP testing"""
-        limit = arguments.get('limit', 5)
-        
-        mock_activities = [
-            {"timestamp": "2024-01-01T10:30:00", "description": "ACTIVITY: Coding in Python"},
-            {"timestamp": "2024-01-01T10:25:00", "description": "ACTIVITY: Reading documentation"},
-            {"timestamp": "2024-01-01T10:20:00", "description": "ACTIVITY: Email communication"},
-        ]
-        
-        return {
-            "success": True,
-            "activities": mock_activities[:limit],
-            "total_count": len(mock_activities)
-        }
+                return {"success": True, "data": data}
+        else:
+            error_msg = response.get("error", "Unknown error")
+            logger.error(f"MCP tool call failed: {error_msg}")
+            return {"success": False, "error": error_msg}
 
 
 class ActivityTrackingAgent:

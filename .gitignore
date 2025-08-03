@@ -67,3 +67,6 @@ dist-ssr
 *.sw?
 eng.traineddata
 .vite
+
+test_*.py
+test_*.js

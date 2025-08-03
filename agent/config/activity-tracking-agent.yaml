@@ -38,14 +38,11 @@ instructions:
     If screen content is unclear or minimal, respond: "ACTIVITY: Unknown activity"
 
 mcp_server:
-  host: "localhost"
-  port: 3000
-  protocol: "http"  # or "stdio"
-  timeout: 5  # seconds
+  command: "node"
+  args: ["../mcp-server/dist/vygil-mcp-server.js"]
+  protocol: "stdio"  # JSON-RPC 2.0 over stdio
+  timeout: 30  # seconds
   tools:
-    screen_capture:
-      name: "screen_capture"
-      description: "Captures current screen as base64 image"
     extract_text:
       name: "extract_text" 
       description: "Performs OCR on captured screen content"

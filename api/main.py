@@ -34,7 +34,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("vygil-api")
 
 # Pydantic models for API requests/responses
@@ -137,69 +137,96 @@ async def process_activity(request: ActivityRequest):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}")
         
-        # Send image to MCP REST API server for OCR processing
-        logger.info("🔤 Sending image to MCP REST API server for OCR processing...")
-        mcp_api_host = os.getenv("MCP_SERVER_HOST", "localhost")
-        mcp_api_port = os.getenv("MCP_API_PORT", "3001")  # REST API runs on 3001
+        # 🤖 AGENTIC WORKFLOW: Let LLM decide which tools to use
+        logger.info("🤖 Starting agentic workflow - LLM will decide tools...")
         
-        extracted_text = ""
-        ocr_confidence = 0.0
+        # Prepare image for agent
+        image_base64 = request.image if request.image.startswith('data:') else f"data:image/png;base64,{request.image}"
+        
+        # Create agentic context for LLM
+        available_tools = list(config.get('mcp_server', {}).get('tools', {}).keys())
+
+        logger.info(f"Available tools: {available_tools}")
+        
+        agentic_prompt = f"""
+You are an autonomous AI agent for activity tracking. Your goal is to analyze screen content and identify user activities.
+
+You have received:
+- Image data: {len(image_data)} bytes of base64 image
+- Goal: Track and classify user activity
+
+Available tools at your disposal:
+{chr(10).join(f'- {tool}: {config.get("mcp_server", {}).get("tools", {}).get(tool, {}).get("description", "")}' for tool in available_tools)}
+
+Decide which tool to use first. Respond with JSON:
+{{"tool": "tool_name", "reasoning": "why you chose this tool"}}
+"""
+        
+        logger.info(f"Agentic prompt:\n{agentic_prompt}")
+
+        # Let LLM decide which tool to use
+        logger.info("🧠 Agent deciding which tool to use...")
+        
+        # Use higher token limit for agentic decision-making
+        messages = [{"role": "user", "content": agentic_prompt}]
+        client = llm_processor.clients['openai']
+        
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=150,  # Higher limit for JSON response
+            temperature=0.1,  # Low temperature for consistent JSON
+            timeout=15
+        )
+        tool_decision = response.choices[0].message.content.strip()
+        logger.info(f"🤖 Agent's raw decision: {tool_decision}")
         
         try:
-            # Prepare image data for MCP server (ensure proper format)
-            image_base64 = request.image if request.image.startswith('data:') else f"data:image/png;base64,{request.image}"
+            import json
+            # Clean up the response in case it has extra text
+            tool_decision_clean = tool_decision.strip()
+            if not tool_decision_clean.startswith('{'):
+                # Extract JSON from the response if there's extra text
+                start = tool_decision_clean.find('{')
+                end = tool_decision_clean.rfind('}') + 1
+                if start != -1 and end > start:
+                    tool_decision_clean = tool_decision_clean[start:end]
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Call MCP REST API server OCR endpoint
-                logger.info(f"📞 Calling MCP API: http://{mcp_api_host}:{mcp_api_port}/api/ocr")
-                
-                ocr_response = await client.post(
-                    f"http://{mcp_api_host}:{mcp_api_port}/api/ocr",
-                    json={"imageData": image_base64},
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                if ocr_response.status_code == 200:
-                    ocr_result = ocr_response.json()
-                    if ocr_result.get("success"):
-                        extracted_text = ocr_result.get("text", "").strip()
-                        ocr_confidence = ocr_result.get("confidence", 0.0)
-                        processing_time = ocr_result.get("processingTime", 0)
-                        
-                        logger.info(f"✅ OCR successful:")
-                        logger.info(f"   - Text length: {len(extracted_text)} characters")
-                        logger.info(f"   - Confidence: {ocr_confidence:.2f}")
-                        logger.info(f"   - Processing time: {processing_time}ms")
-                        logger.info(f"   - Preview: \"{extracted_text[:100]}{'...' if len(extracted_text) > 100 else ''}\"")
-                        
-                        # If OCR returned empty or very short text, use a fallback
-                        if len(extracted_text.strip()) < 10:
-                            logger.warning("⚠️ OCR returned minimal text, using fallback")
-                            extracted_text = "Desktop interface with minimal visible text content"
-                    else:
-                        raise Exception(f"OCR failed: {ocr_result.get('error', 'Unknown error')}")
-                else:
-                    raise Exception(f"MCP server returned {ocr_response.status_code}: {ocr_response.text}")
+            decision = json.loads(tool_decision_clean)
+            chosen_tool = decision.get('tool')
+            reasoning = decision.get('reasoning', 'No reasoning provided')
+            
+            logger.info(f"🎯 Agent decided: '{chosen_tool}' - Reasoning: {reasoning}")
+        except (json.JSONDecodeError, ValueError) as e:
+            # Fallback if JSON parsing fails
+            chosen_tool = 'extract_text'
+            reasoning = 'Fallback tool selection - JSON parsing failed'
+            logger.error(f"❌ Failed to parse agent decision: {tool_decision} - Error: {e}")
+            logger.warning("⚠️ Agent decision parsing failed, using fallback")
+        
+        # Execute the agent's chosen tool
+        extracted_text = ""
+        if chosen_tool == 'extract_text':
+            logger.info(f"🔧 Agent executing chosen tool: {chosen_tool}")
+            ocr_result = await mcp_client.call_tool("extract_text", {
+                "imageData": image_base64
+            })
+            
+            if ocr_result.get("success"):
+                extracted_text = ocr_result.get("text", "")
+                logger.info(f"✅ Agent's tool succeeded: extracted {len(extracted_text)} characters")
+            else:
+                logger.warning(f"⚠️ Agent's tool failed: {ocr_result.get('error')}")
+                extracted_text = "Minimal screen content detected"
+        else:
+            # Agent chose a different tool - handle accordingly
+            extracted_text = "Agent chose non-OCR tool"
                     
-        except Exception as e:
-            logger.warning(f"⚠️ MCP server OCR failed, using fallback: {e}")
-            # Fallback to enhanced mock if MCP server is unavailable
-            import random
-            fallback_texts = [
-                "VS Code editor with Python file open, showing function definitions and import statements",
-                "Chrome browser showing Stack Overflow page with coding questions and answers", 
-                "Terminal window with git commands and file listings visible",
-                "Slack application with team chat messages and notifications",
-                "Gmail inbox with emails from colleagues and project updates",
-                "Notion page with meeting notes and task lists",
-                "YouTube video player showing programming tutorial",
-                "Figma design interface with UI mockups and components",
-                "Microsoft Teams video call with participants visible",
-                "Excel spreadsheet with data tables and charts"
-            ]
-            extracted_text = random.choice(fallback_texts)
-            ocr_confidence = 0.5  # Lower confidence for fallback
-            logger.info(f"🔤 Using fallback OCR text: {extracted_text}")
+        # Fallback if agentic workflow fails
+        if not extracted_text or len(extracted_text.strip()) < 5:
+            logger.warning("⚠️ Agentic tool execution failed, using fallback")
+            extracted_text = "Screen content with interface elements"
         
         # Ensure we have some text to process
         if not extracted_text or len(extracted_text.strip()) < 5:
