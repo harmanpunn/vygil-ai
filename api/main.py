@@ -31,7 +31,7 @@ load_dotenv()
 # Add agent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 
-from agent import ConfigLoader, LLMProcessor, MCPClient
+from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -207,8 +207,18 @@ async def process_activity(request: ActivityRequest):
         
         # Process with LLM
         logger.info("🤖 Calling LLM processor...")
-        activity, confidence = await llm_processor.classify_activity(extracted_text)
+        agent_id = "vygil-activity-tracker"  # Default agent ID for API usage
+        activity, confidence = await llm_processor.classify_activity(extracted_text, agent_id)
         logger.info(f"🎯 LLM returned: activity='{activity}', confidence={confidence}")
+        
+        # Execute autonomous code (agentic behavior) - This was missing!
+        logger.info("🤖 Executing autonomous code...")
+        autonomous_code = config.get('code', '')
+        if autonomous_code:
+            execute_autonomous_code(autonomous_code, activity, agent_id)
+            logger.info("✅ Autonomous code executed - memory updated")
+        else:
+            logger.warning("⚠️ No autonomous code found in config")
         
         # Calculate processing time
         processing_time = asyncio.get_event_loop().time() - start_time

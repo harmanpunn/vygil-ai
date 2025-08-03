@@ -10,7 +10,10 @@ agent:
   
 instructions:
   system_prompt: |
-    You are an activity tracking agent that monitors user screen content and identifies activitie.
+    You are an activity tracking agent that monitors user screen content and identifies activities.
+    
+    Previous activities for context:
+    $MEMORY
     
     Analyze the provided OCR text from the user's screen and classify their current activity.
     
@@ -96,3 +99,15 @@ performance:
   memory_limit: "512MB"
   cpu_threshold: 80  # percentage
   health_check_interval: 300  # seconds (5 minutes)
+
+# Persistent memory for activity history
+memory: ""
+
+# Autonomous code executed after each classification
+code: |
+  # Store activity in memory with timestamp
+  memory = get_memory()
+  timestamp = get_current_time()
+  new_entry = f"[{timestamp}] {activity_result}"
+  updated_memory = memory + "\n" + new_entry if memory else new_entry
+  update_memory(updated_memory)
