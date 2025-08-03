@@ -16,13 +16,11 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-ghost via-primary-whisper to-primary-neutral">
-      {/* Debug: Test if custom colors work */}
-      <div className="w-4 h-4 bg-accents-sage fixed top-2 right-2 rounded-full"></div>
-      
-      {/* Floating Header */}
+      {/* Fixed Header */}
       <Header status={monitoringStatus} />
       
       {/* Main Content */}
+<<<<<<< HEAD
       <div className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 pt-20 pb-16">
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Left Sidebar - Agent & System Info */}
@@ -43,6 +41,10 @@ function App() {
             />
           </div>
         </div>
+=======
+      <div className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 pt-16 pb-16">
+        <ActivityTracker onStatusChange={setMonitoringStatus} />
+>>>>>>> 05c9a449cc1aa52a6de153bbebc66be82e572759
       </div>
     </div>
   )

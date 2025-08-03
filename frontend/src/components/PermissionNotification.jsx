@@ -4,11 +4,11 @@ const PermissionNotification = () => {
                    border border-primary-slate/40 rounded-lg p-6 mb-8
                    transition-all duration-200 ease-out
                    hover:shadow-lg hover:bg-gradient-to-br hover:from-primary-whisper hover:to-primary-neutral">
-      <div className="flex items-start space-x-4">
+      <div className="flex items-center space-x-4">
         {/* Shield Icon */}
         <div className="flex-shrink-0">
           <svg 
-            className="w-6 h-6 text-accents-sage mt-1" 
+            className="w-6 h-6 text-accents-sage" 
             fill="none" 
             viewBox="0 0 24 24" 
             stroke="currentColor"
@@ -23,7 +23,7 @@ const PermissionNotification = () => {
         </div>
         
         <div className="flex-1">
-          <h3 className="text-base font-medium text-primary-obsidian mb-1">
+          <h3 className="text-base font-medium text-primary-obsidian mb-1 leading-none">
             Screen Permission Required
           </h3>
           <p className="text-sm font-normal text-primary-charcoal leading-relaxed">
