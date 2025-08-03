@@ -332,18 +332,18 @@ const ActivityTracker = ({ onStatusChange }) => {
     sessionStartRef.current = Date.now()
     
     console.log('✅ Screen capture initialized successfully')
-    console.log('⏰ Setting up 25-second monitoring interval')
+    console.log('⏰ Setting up 60-second monitoring interval')
     console.log('🎯 First capture will happen in 2 seconds...')
     
-    // Start 25-second monitoring loop
-    console.log('⚡ Creating 25-second interval...')
+    // Start 60-second monitoring loop
+    console.log('⚡ Creating 60-second interval...')
     intervalRef.current = setInterval(() => {
-      console.log('⏰ 25-second interval triggered!', { 
+      console.log('⏰ 60-second interval triggered!', { 
         currentTime: new Date().toLocaleTimeString(),
         isActive: isActiveRef.current 
       })
       executeMonitoringCycle()
-    }, 25000)
+    }, 60000)
     
     console.log(`📋 Interval ID: ${intervalRef.current}`)
     
@@ -401,7 +401,7 @@ const ActivityTracker = ({ onStatusChange }) => {
         const elapsed = (Date.now() - sessionStartRef.current) / 1000
         // Account for the 2-second initial delay
         const adjustedElapsed = elapsed - 2
-        const nextIn = adjustedElapsed > 0 ? 25 - (adjustedElapsed % 25) : 2 - elapsed
+        const nextIn = adjustedElapsed > 0 ? 60 - (adjustedElapsed % 60) : 2 - elapsed
         const countdown = Math.floor(Math.max(0, nextIn))
         setNextCapture(countdown)
         

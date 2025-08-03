@@ -4,7 +4,7 @@ agent:
   name: "Vygil Activity Tracker"
   id: "vygil-activity-tracker"
   version: "1.0.0"
-  loop_interval: 25  # seconds between activity captures
+  loop_interval: 60  # seconds between activity captures
   max_retries: 3
   timeout: 10  # seconds for each operation
   

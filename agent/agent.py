@@ -323,7 +323,7 @@ class ActivityTrackingAgent:
         
         # Agent state
         self.running = False
-        self.loop_interval = self.agent_config.get('loop_interval', 25)
+        self.loop_interval = self.agent_config.get('loop_interval', 60)
         self.max_retries = self.agent_config.get('max_retries', 3)
         self.consecutive_failures = 0
         
@@ -336,7 +336,7 @@ class ActivityTrackingAgent:
         logger.info(f"Loop interval: {self.loop_interval} seconds")
     
     async def start_monitoring(self):
-        """Start the 25-second activity monitoring loop"""
+        """Start the 60-second activity monitoring loop"""
         if self.running:
             logger.warning("Agent already running")
             return
