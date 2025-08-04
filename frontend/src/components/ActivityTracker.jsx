@@ -55,6 +55,7 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
           if (response.ok) {
             const data = await response.json()
             setFocusSummary(data.summary)
+            console.log('Focus Summary: ', data.summary)
           }
         } catch (err) {
           console.error('Failed to fetch focus summary:', err)
@@ -417,7 +418,7 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
         isActive: isActiveRef.current 
       })
       executeMonitoringCycle()
-    }, 60000)
+    }, 25000)
     
     console.log(`📋 Interval ID: ${intervalRef.current}`)
     
@@ -475,7 +476,7 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
         const elapsed = (Date.now() - sessionStartRef.current) / 1000
         // Account for the 2-second initial delay
         const adjustedElapsed = elapsed - 2
-        const nextIn = adjustedElapsed > 0 ? 60 - (adjustedElapsed % 60) : 2 - elapsed
+        const nextIn = adjustedElapsed > 0 ? 25 - (adjustedElapsed % 25) : 2 - elapsed
         const countdown = Math.floor(Math.max(0, nextIn))
         setNextCapture(countdown)
         

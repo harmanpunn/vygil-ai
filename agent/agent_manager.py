@@ -51,7 +51,7 @@ class AgentManager:
                     'version': agent_info.get('version', '1.0.0'),
                     'config_file': str(config_file),
                     'config': config,
-                    'loop_interval': agent_info.get('loop_interval', 60),
+                    'loop_interval': agent_info.get('loop_interval', 20),
                     'features': self._extract_features(config)
                 }
                 

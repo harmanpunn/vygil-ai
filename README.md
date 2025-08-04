@@ -1,4 +1,4 @@
-# Vygil AI - Autonomous Activity Tracking & Anomaly Detection
+# Vygil - Autonomous Activity Tracking & Anomaly Detection
 
 > **AI-powered activity monitoring with secure screen capture and intelligent multi-agent architecture**
 
