@@ -263,19 +263,35 @@ class LLMProcessor:
     
     def _calculate_confidence(self, screen_text: str, response: str) -> float:
         """Calculate confidence score based on text length and response quality"""
-        base_confidence = 0.5
+        base_confidence = 0.3
         
-        # Higher confidence for longer screen text
-        if len(screen_text) > 100:
-            base_confidence += 0.2
-        if len(screen_text) > 500:
-            base_confidence += 0.1
+        # Text length indicators (more gradual scoring)
+        text_len = len(screen_text.strip())
+        if text_len < 20:
+            base_confidence += 0.1  # Very little text, low confidence
+        elif text_len < 100:
+            base_confidence += 0.2  # Some text available
+        elif text_len < 500:
+            base_confidence += 0.3  # Good amount of text
+        else:
+            base_confidence += 0.4  # Lots of context
         
-        # Higher confidence if response follows format
+        # Response quality indicators
         if response.startswith("ACTIVITY:"):
-            base_confidence += 0.2
+            base_confidence += 0.1  # Formatted correctly
         
-        return min(base_confidence, 1.0)
+        # Response specificity (longer, more specific responses get higher confidence)
+        activity_text = response.replace("ACTIVITY:", "").strip()
+        if len(activity_text) > 20:
+            base_confidence += 0.1  # Detailed description
+        elif len(activity_text) < 10:
+            base_confidence -= 0.1  # Very generic description
+        
+        # Add some randomness for realistic variation (±0.05)
+        import random
+        variation = random.uniform(-0.05, 0.05)
+        
+        return max(0.1, min(0.95, base_confidence + variation))
     
     def _format_response(self, response: str, agent_id: str = None) -> str:
         """Format response based on agent type"""
@@ -299,17 +315,10 @@ class LLMProcessor:
                 # Parse and extract meaningful message
                 focus_data = json.loads(json_str)
                 activity = focus_data.get('activity', 'Unknown activity')
-                suggestion = focus_data.get('suggestion', '')
                 
-                # Create a clean, non-repetitive message
-                if suggestion:
-                    # Check if suggestion already mentions the activity to avoid repetition
-                    if activity.lower() in suggestion.lower():
-                        return f"ACTIVITY: {suggestion}"
-                    else:
-                        return f"ACTIVITY: {activity}. {suggestion}"
-                else:
-                    return f"ACTIVITY: {activity}"
+                # For logs, keep it concise like activity tracker - only show the activity
+                # The suggestion and other data are used internally for focus metrics
+                return f"ACTIVITY: {activity}"
                     
             except (json.JSONDecodeError, AttributeError):
                 # Fallback to original response if JSON parsing fails

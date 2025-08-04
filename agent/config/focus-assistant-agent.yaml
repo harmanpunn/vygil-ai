@@ -3,8 +3,9 @@
 agent:
   name: "Vygil Focus Assistant"
   id: "vygil-focus-assistant"
+  description: "Helps maintain focus by detecting distractions and tracking productivity"
   version: "1.0.0"
-  loop_interval: 30  # seconds between focus checks (more frequent)
+  loop_interval: 60 
   max_retries: 3
   timeout: 10  # seconds for each operation
   
@@ -23,7 +24,7 @@ instructions:
       "productivity_score": 0.0-1.0,
       "category": "productive|neutral|distraction",
       "suggestion": "brief helpful suggestion",
-      "activity": "brief description"
+      "activity": "concise activity description (max 5 words)"
     }
     
     Focus Categories:
@@ -54,24 +55,13 @@ instructions:
     - Shopping: cart, prices, product pages, "buy now", deals
     
     Examples:
-    - Instagram browsing: {"focus_level": "low", "productivity_score": 0.1, "category": "distraction", "suggestion": "Consider taking a 5-minute break then returning to work", "activity": "Browsing Instagram"}
-    - Coding work: {"focus_level": "high", "productivity_score": 0.9, "category": "productive", "suggestion": "Great focus! Keep up the productive work", "activity": "Coding"}
-    - Work research: {"focus_level": "medium", "productivity_score": 0.6, "category": "neutral", "suggestion": "Focused research - make sure to apply what you learn", "activity": "Research"}
+    - Instagram browsing: {"focus_level": "low", "productivity_score": 0.1, "category": "distraction", "suggestion": "Take a break, then refocus", "activity": "Social media browsing"}
+    - Coding work: {"focus_level": "high", "productivity_score": 0.9, "category": "productive", "suggestion": "Great focus!", "activity": "Coding"}
+    - Work research: {"focus_level": "medium", "productivity_score": 0.6, "category": "neutral", "suggestion": "Apply what you learn", "activity": "Research"}
     - Coding/Development (IDE, terminal, debugging)
     - Work Documents (spreadsheets, presentations, reports)
     - Learning (tutorials, documentation, courses)
     - Communication (work emails, professional meetings)
-    
-    NEUTRAL:
-    - File management, system tasks
-    - Quick research or reference lookup
-    - Brief breaks (reasonable duration)
-    
-    DISTRACTION:
-    - Social media browsing
-    - Entertainment (games, videos, streaming)
-    - Personal browsing during work hours
-    - Extended non-work activities
     
     Suggestions Examples:
     - "Great focus! Keep up the productive work."
@@ -174,7 +164,7 @@ code: |
   # Store focus event in memory
   memory = get_memory()
   timestamp = get_current_time()
-  focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | ACTIVITY: {activity}"
+  focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | {activity}"
   
   # Update memory with focus tracking
   updated_memory = memory + "\n" + focus_entry if memory else focus_entry

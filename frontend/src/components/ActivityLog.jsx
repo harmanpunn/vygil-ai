@@ -5,8 +5,8 @@ const ActivityLog = ({ activities, isEmpty }) => {
   };
 
   const getLogLevel = (confidence) => {
-    if (confidence > 0.8) return { level: 'INFO', color: 'text-green-400' };
-    if (confidence > 0.6) return { level: 'WARN', color: 'text-yellow-400' };
+    if (confidence > 0.7) return { level: 'INFO', color: 'text-green-400' };
+    if (confidence > 0.4) return { level: 'WARN', color: 'text-yellow-400' };
     return { level: 'DEBUG', color: 'text-blue-400' };
   };
 

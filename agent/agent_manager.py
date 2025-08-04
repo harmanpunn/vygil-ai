@@ -36,6 +36,8 @@ class AgentManager:
         """Discover all available agent configurations"""
         agents = {}
         
+        logger.info(f"Looking for agent configs in: {self.config_dir}")
+        
         # Look for YAML config files
         for config_file in self.config_dir.glob("*-agent.yaml"):
             try:
@@ -53,7 +55,8 @@ class AgentManager:
                     'features': self._extract_features(config)
                 }
                 
-                logger.info(f"Discovered agent: {agents[agent_id]['name']}")
+                logger.info(f"Discovered agent: {agents[agent_id]['name']} - {agents[agent_id]['description']}")
+                logger.debug(f"Agent info loaded: {agents[agent_id]}")
                 
             except Exception as e:
                 logger.error(f"Failed to load agent config {config_file}: {e}")
@@ -64,7 +67,23 @@ class AgentManager:
         """Extract key features from agent config"""
         features = []
         
-        # Check for specific features based on config
+        # Core features all agents have
+        if config.get('memory') is not None:  # Memory section exists
+            features.append('Memory Persistence')
+        
+        if '$MEMORY' in config.get('instructions', {}).get('system_prompt', ''):
+            features.append('Context Injection')
+            
+        if config.get('code'):  # Autonomous code execution
+            features.append('Autonomous Execution')
+            
+        if config.get('mcp_server'):  # MCP integration
+            features.append('MCP Tools')
+            
+        if len(config.get('llm', {}).get('fallback_providers', [])) > 0:
+            features.append('Multi-LLM Support')
+        
+        # Agent-specific features
         if 'focus_features' in config:
             features.extend(['Focus Tracking', 'Productivity Analysis', 'Distraction Alerts'])
         
@@ -73,9 +92,6 @@ class AgentManager:
             
         if config.get('monitoring', {}).get('adaptive_prompts'):
             features.append('Adaptive Learning')
-            
-        if config.get('privacy', {}).get('pause_monitoring_key'):
-            features.append('Pause Control')
             
         return features
     
