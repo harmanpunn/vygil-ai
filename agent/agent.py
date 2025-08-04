@@ -535,7 +535,7 @@ class ActivityTrackingAgent:
         
         # Agent state
         self.running = False
-        self.loop_interval = self.agent_config.get('loop_interval', 60)
+        self.loop_interval = self.agent_config.get('loop_interval', 20)
         self.max_retries = self.agent_config.get('max_retries', 3)
         self.consecutive_failures = 0
         

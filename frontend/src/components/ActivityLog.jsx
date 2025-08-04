@@ -73,7 +73,7 @@ const ActivityLog = ({ activities, isEmpty }) => {
                       </span>
                       
                       {/* Activity Message */}
-                      <span className="text-gray-300 flex-1">
+                      <span className="text-gray-300">
                         {activity.description}
                       </span>
                     </div>
@@ -91,7 +91,6 @@ const ActivityLog = ({ activities, isEmpty }) => {
                       </span>
                       <span className="text-gray-500">
                         confidence_score={activity.confidence.toFixed(3)} 
-                        classification_time={Math.floor(Math.random() * 1000 + 500)}ms
                       </span>
                     </div>
                   </div>
