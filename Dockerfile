@@ -26,10 +26,6 @@ ENV PORT=5173
 COPY pyproject.toml uv.lock ./
 COPY frontend/package*.json ./frontend/
 COPY mcp-server/package*.json ./mcp-server/
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 
 # Install Node.js dependencies
 RUN cd frontend && npm install
