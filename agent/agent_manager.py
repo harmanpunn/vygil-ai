@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
-from agent import ActivityTrackingAgent, ConfigLoader, FocusAssistantAgent
+from agent import ConfigurableAgent, ConfigLoader
 
 logger = logging.getLogger("agent-manager")
 
@@ -116,11 +116,8 @@ class AgentManager:
             agent_info = self.available_agents[agent_id]
             config_file = agent_info['config_file']
             
-            # Create the appropriate agent type
-            if 'focus-assistant' in agent_id:
-                self.current_agent = FocusAssistantAgent(config_file)
-            else:
-                self.current_agent = ActivityTrackingAgent(config_file)
+            # Create configurable agent (no hardcoded types!)
+            self.current_agent = ConfigurableAgent(config_file)
             
             self.current_agent_id = agent_id
             logger.info(f"Selected agent: {agent_info['name']}")
@@ -141,11 +138,8 @@ class AgentManager:
             agent_info = self.available_agents[agent_id]
             config_file = agent_info['config_file']
             
-            # Create the appropriate agent type
-            if 'focus-assistant' in agent_id:
-                self.current_agent = FocusAssistantAgent(config_file)
-            else:
-                self.current_agent = ActivityTrackingAgent(config_file)
+            # Create configurable agent (no hardcoded types!)
+            self.current_agent = ConfigurableAgent(config_file)
             
             self.current_agent_id = agent_id
             logger.info(f"Selected agent: {agent_info['name']}")

@@ -140,11 +140,21 @@ class LLMProcessor:
                 logger.info("Anthropic client initialized")
             except ImportError:
                 logger.warning("Anthropic package not available")
+                
+        elif primary_provider == 'gemini' and os.getenv('GOOGLE_API_KEY'):
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+                self.clients['gemini'] = genai
+                logger.info("Google Gemini client initialized")
+            except ImportError:
+                logger.warning("Google Generative AI package not available")
         
         # Setup fallback providers
         fallback_providers = self.llm_config.get('fallback_providers', [])
         for fallback in fallback_providers:
             provider = fallback.get('provider')
+            
             if provider == 'anthropic' and provider not in self.clients and os.getenv('ANTHROPIC_API_KEY'):
                 try:
                     import anthropic
@@ -152,6 +162,23 @@ class LLMProcessor:
                     logger.info("Anthropic fallback client initialized")
                 except ImportError:
                     logger.warning("Anthropic package not available for fallback")
+                    
+            elif provider == 'gemini' and provider not in self.clients and os.getenv('GOOGLE_API_KEY'):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+                    self.clients['gemini'] = genai
+                    logger.info("Google Gemini fallback client initialized")
+                except ImportError:
+                    logger.warning("Google Generative AI package not available for fallback")
+                    
+            elif provider == 'openai' and provider not in self.clients and os.getenv('OPENAI_API_KEY'):
+                try:
+                    import openai
+                    self.clients['openai'] = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                    logger.info("OpenAI fallback client initialized")
+                except ImportError:
+                    logger.warning("OpenAI package not available for fallback")
     
     async def classify_activity(self, screen_text: str, agent_id: str) -> Tuple[str, float]:
         """
@@ -213,6 +240,8 @@ class LLMProcessor:
                 return await self._query_openai(user_prompt, system_prompt)
             elif provider == 'anthropic':
                 return await self._query_anthropic(user_prompt, system_prompt)
+            elif provider == 'gemini':
+                return await self._query_gemini(user_prompt, system_prompt)
             else:
                 logger.warning(f"Unknown LLM provider: {provider}")
                 return None
@@ -238,8 +267,22 @@ class LLMProcessor:
             temperature=self.llm_config.get('temperature', 0.1),
             timeout=self.llm_config.get('timeout', 10)
         )
-        logger.info(f"OpenAI response: {response.choices[0].message.content.strip()}")
-        return response.choices[0].message.content.strip()
+        
+        response_content = response.choices[0].message.content.strip()
+        
+        # For focus agents, log only the activity instead of full JSON
+        if response_content.startswith('{') and 'focus_level' in response_content:
+            try:
+                import json
+                focus_data = json.loads(response_content)
+                activity = focus_data.get('activity', 'Unknown activity')
+                logger.info(f"OpenAI response: ACTIVITY: {activity}")
+            except:
+                logger.info(f"OpenAI response: {response_content}")
+        else:
+            logger.info(f"OpenAI response: {response_content}")
+        
+        return response_content
     
     async def _query_anthropic(self, user_prompt: str, system_prompt: str = "") -> str:
         """Query Anthropic Claude API"""
@@ -260,6 +303,39 @@ class LLMProcessor:
         
         response = await asyncio.to_thread(client.messages.create, **params)
         return response.content[0].text.strip()
+    
+    async def _query_gemini(self, user_prompt: str, system_prompt: str = "") -> str:
+        """Query Google Gemini API"""
+        genai = self.clients['gemini']
+        model_name = self.llm_config.get('model', 'gemini-1.5-flash')
+        
+        # Combine system prompt and user prompt for Gemini
+        if system_prompt:
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
+        else:
+            combined_prompt = user_prompt
+        
+        # Configure generation parameters
+        generation_config = {
+            'temperature': self.llm_config.get('temperature', 0.1),
+            'max_output_tokens': self.llm_config.get('max_tokens', 50),
+        }
+        
+        # Initialize the model
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config=generation_config
+        )
+        
+        # Generate response
+        response = await asyncio.to_thread(
+            model.generate_content,
+            combined_prompt
+        )
+        
+        result_text = response.text.strip()
+        logger.info(f"Gemini response: {result_text}")
+        return result_text
     
     def _calculate_confidence(self, screen_text: str, response: str) -> float:
         """Calculate confidence score based on text length and response quality"""
@@ -322,6 +398,19 @@ class LLMProcessor:
                     
             except (json.JSONDecodeError, AttributeError):
                 # Fallback to original response if JSON parsing fails
+                pass
+        
+        # For any agent with focus_features, extract activity from JSON
+        # This handles the new ConfigurableAgent with focus_features
+        if response.startswith('{') and response.endswith('}'):
+            try:
+                import json
+                focus_data = json.loads(response)
+                if 'activity' in focus_data:
+                    activity = focus_data.get('activity', 'Unknown activity')
+                    return f"ACTIVITY: {activity}"
+            except (json.JSONDecodeError, ValueError):
+                # If JSON parsing fails, continue to default formatting
                 pass
         
         # Default formatting for regular activity tracker
@@ -521,15 +610,75 @@ class MCPClient:
             return {"success": False, "error": error_msg}
 
 
-class ActivityTrackingAgent:
-    """Main activity tracking agent implementing the MVP flow"""
+class SensorManager:
+    """Manages different sensor inputs (screen, audio, camera, etc.)"""
     
-    def __init__(self, config_path: str = "config/activity-tracking-agent.yaml"):
+    def __init__(self, sensors_config: Dict[str, Any]):
+        self.sensors_config = sensors_config
+        self.available_sensors = self._discover_sensors()
+        logger.info(f"SensorManager initialized with {len(self.available_sensors)} sensors")
+    
+    def _discover_sensors(self) -> Dict[str, Dict]:
+        """Discover available sensors based on configuration"""
+        sensors = {}
+        
+        # Screen sensor (always available via MCP)
+        if self.sensors_config.get('screen', {}).get('enabled', True):
+            sensors['screen'] = {
+                'type': 'visual',
+                'tools': ['screen_capture', 'extract_text'],
+                'description': 'Captures and analyzes screen content'
+            }
+        
+        # Audio sensor (future implementation)
+        if self.sensors_config.get('audio', {}).get('enabled', False):
+            sensors['audio'] = {
+                'type': 'auditory', 
+                'tools': ['capture_audio', 'transcribe_audio'],
+                'description': 'Captures and transcribes audio input'
+            }
+        
+        # Camera sensor (future implementation)
+        if self.sensors_config.get('camera', {}).get('enabled', False):
+            sensors['camera'] = {
+                'type': 'visual',
+                'tools': ['capture_image', 'analyze_visual'],
+                'description': 'Captures and analyzes camera input'
+            }
+        
+        # Microphone sensor (future implementation)
+        if self.sensors_config.get('microphone', {}).get('enabled', False):
+            sensors['microphone'] = {
+                'type': 'auditory',
+                'tools': ['capture_voice', 'voice_analysis'], 
+                'description': 'Captures and analyzes voice input'
+            }
+        
+        return sensors
+    
+    def get_sensor_capabilities(self, sensor_name: str) -> Dict[str, Any]:
+        """Get capabilities of a specific sensor"""
+        return self.available_sensors.get(sensor_name, {})
+    
+    def get_sensors_by_type(self, sensor_type: str) -> List[str]:
+        """Get all sensors of a specific type (visual, auditory, etc.)"""
+        return [name for name, config in self.available_sensors.items() 
+                if config.get('type') == sensor_type]
+
+
+class ConfigurableAgent:
+    """Pure YAML-driven agent that can use any sensors and tools"""
+    
+    def __init__(self, config_path: str):
         self.config = ConfigLoader.load_config(config_path)
         self.agent_config = self.config.get('agent', {})
-        self.agent_id = self.agent_config.get('id', 'vygil-activity-tracker')
+        self.agent_id = self.agent_config.get('id', 'configurable-agent')
         
-        # Initialize components
+        # Initialize sensor manager
+        sensors_config = self.config.get('sensors', {})
+        self.sensor_manager = SensorManager(sensors_config)
+        
+        # Initialize LLM and MCP components
         self.llm_processor = LLMProcessor(self.config)
         self.mcp_client = MCPClient(self.config)
         
@@ -539,13 +688,336 @@ class ActivityTrackingAgent:
         self.max_retries = self.agent_config.get('max_retries', 3)
         self.consecutive_failures = 0
         
-        # Statistics
+        # Statistics and custom data storage
         self.total_iterations = 0
         self.successful_iterations = 0
         self.start_time = None
+        self.custom_data = {}  # For agent-specific data like focus metrics
         
-        logger.info(f"Agent initialized: {self.agent_config.get('name', 'Vygil Agent')}")
+        logger.info(f"ConfigurableAgent initialized: {self.agent_config.get('name', 'Unnamed Agent')}")
+        logger.info(f"Available sensors: {list(self.sensor_manager.available_sensors.keys())}")
         logger.info(f"Loop interval: {self.loop_interval} seconds")
+    
+    async def process_input(self, input_data: Dict[str, Any], timestamp: str) -> Dict[str, Any]:
+        """
+        Universal sensor-aware processing method.
+        Agent autonomously decides which sensors to use and how to process data.
+        
+        Args:
+            input_data: {
+                "screen": {"image": "base64_data", "metadata": {}},
+                "audio": {"data": "base64_audio", "metadata": {}},
+                "camera": {"image": "base64_data", "metadata": {}},
+                # ... future sensors
+            }
+            timestamp: ISO timestamp
+            
+        Returns: {
+            "result": str,  # Agent's analysis result
+            "confidence": float,
+            "processing_time": float,
+            "sensors_used": List[str],
+            "agent_reasoning": str,
+            "custom_data": Dict  # Agent-specific data (focus metrics, etc.)
+        }
+        """
+        start_time = time.time()
+        
+        try:
+            logger.info(f"🤖 Agent {self.agent_id} autonomously processing multi-sensor input...")
+            
+            # STEP 1: Agent analyzes available sensors and input data
+            available_sensors = list(self.sensor_manager.available_sensors.keys())
+            present_sensors = [sensor for sensor in available_sensors if sensor in input_data]
+            
+            logger.info(f"🔍 Available sensors: {available_sensors}")
+            logger.info(f"📡 Present input sensors: {present_sensors}")
+            
+            # STEP 2: Agent decides processing strategy based on configuration
+            agent_prompt = self._build_sensor_decision_prompt(present_sensors, input_data)
+            
+            decision_response = await self.llm_processor._query_llm(
+                self.llm_processor.llm_config.get('provider', 'openai'),
+                agent_prompt
+            )
+            
+            # Parse agent's decision
+            try:
+                import json
+                decision = json.loads(decision_response)
+                chosen_sensors = decision.get('chosen_sensors', present_sensors[:1])
+                processing_plan = decision.get('processing_plan', 'Extract and analyze data')
+                reasoning = decision.get('reasoning', 'Default sensor selection')
+                logger.info(f"🎯 Agent decision: sensors={chosen_sensors}, plan={processing_plan}")
+            except:
+                chosen_sensors = present_sensors[:1]  # Fallback to first available
+                processing_plan = 'Extract and analyze available data'
+                reasoning = 'Fallback sensor selection'
+                logger.warning("Agent decision parsing failed, using fallback")
+            
+            # STEP 3: Execute sensor-specific processing
+            processed_data = {}
+            for sensor in chosen_sensors:
+                if sensor in input_data:
+                    sensor_result = await self._process_sensor_data(sensor, input_data[sensor])
+                    processed_data[sensor] = sensor_result
+            
+            # STEP 4: Agent analyzes combined sensor data using its configuration
+            combined_data = self._combine_sensor_data(processed_data)
+            
+            # For focus agents, get raw LLM response first before formatting
+            if self.config.get('focus_features'):
+                # Get raw JSON response for focus processing
+                system_prompt = self.config.get('instructions', {}).get('system_prompt', '')
+                system_prompt_with_memory = inject_memory_context(system_prompt, self.agent_id)
+                
+                raw_response = await self.llm_processor._query_llm(
+                    self.llm_processor.llm_config.get('provider', 'openai'),
+                    f"""<Screen Content>\n{combined_data[:2000]}\n</Screen Content>""",
+                    system_prompt_with_memory
+                )
+                
+                if raw_response:
+                    # Use raw response for autonomous code (contains JSON)
+                    result = raw_response
+                    confidence = self.llm_processor._calculate_confidence(combined_data, raw_response)
+                    # Log clean activity instead of raw JSON
+                    try:
+                        import json
+                        focus_data = json.loads(raw_response)
+                        activity = focus_data.get('activity', 'Unknown activity')
+                        logger.debug(f"🎯 Focus agent processing: {activity}")
+                    except:
+                        logger.debug(f"🎯 Focus agent raw response: {raw_response[:100]}...")
+                else:
+                    # Fallback to formatted response
+                    result, confidence = await self.llm_processor.classify_activity(combined_data, self.agent_id)
+            else:
+                # Regular agent processing
+                result, confidence = await self.llm_processor.classify_activity(combined_data, self.agent_id)
+            
+            # STEP 5: Execute autonomous code with appropriate result format
+            autonomous_code = self.config.get('code', '')
+            if autonomous_code:
+                execute_autonomous_code(autonomous_code, result, self.agent_id)
+                logger.debug("✅ Agent executed autonomous code")
+            
+            # STEP 6: Agent-specific data processing (from YAML config)
+            custom_data = await self._process_agent_specific_data(result, processed_data)
+            
+            # Format result for API response (after autonomous processing)
+            if self.config.get('focus_features') and result and result.startswith('{'):
+                # For focus agents, format JSON response for UI display
+                try:
+                    import json
+                    focus_data = json.loads(result)
+                    formatted_result = f"ACTIVITY: {focus_data.get('activity', 'Focus analysis')}"
+                    result = formatted_result
+                    logger.info(f"🎯 Focus agent activity: {focus_data.get('activity', 'Focus analysis')}")
+                except:
+                    result = f"ACTIVITY: {result}"  # Fallback formatting
+            
+            processing_time = time.time() - start_time
+            
+            return {
+                "result": result,
+                "confidence": confidence,
+                "processing_time": processing_time,
+                "sensors_used": chosen_sensors,
+                "agent_reasoning": reasoning,
+                "custom_data": custom_data,
+                "timestamp": timestamp
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Agent processing failed: {e}")
+            return {
+                "result": "RESULT: Processing failed",
+                "confidence": 0.0,
+                "processing_time": time.time() - start_time,
+                "sensors_used": [],
+                "agent_reasoning": f"Error: {str(e)}",
+                "custom_data": {},
+                "timestamp": timestamp
+            }
+    
+    def _build_sensor_decision_prompt(self, present_sensors: List[str], input_data: Dict) -> str:
+        """Build agent's autonomous sensor decision prompt"""
+        sensor_descriptions = []
+        for sensor in present_sensors:
+            sensor_info = self.sensor_manager.get_sensor_capabilities(sensor)
+            data_size = len(str(input_data.get(sensor, {})))
+            sensor_descriptions.append(f"- {sensor}: {sensor_info.get('description', 'No description')} (data: {data_size} bytes)")
+        
+        return f"""
+You are {self.agent_config.get('name', 'an AI agent')}.
+
+Your goal: {self.agent_config.get('description', 'Process and analyze user activity')}
+
+Available sensors with current data:
+{chr(10).join(sensor_descriptions)}
+
+Available MCP tools:
+{chr(10).join(f'- {tool}: {desc.get("description", "")}' for tool, desc in self.config.get("mcp_server", {}).get("tools", {}).items())}
+
+Decide your processing strategy. Respond with JSON:
+{{
+    "chosen_sensors": ["list", "of", "sensors"],
+    "processing_plan": "detailed plan for analysis",
+    "reasoning": "why you chose this approach"
+}}
+"""
+    
+    async def _process_sensor_data(self, sensor: str, sensor_data: Dict) -> str:
+        """Process data from a specific sensor"""
+        sensor_capabilities = self.sensor_manager.get_sensor_capabilities(sensor)
+        
+        if sensor == 'screen':
+            # Use MCP tools for screen processing
+            if 'image' in sensor_data:
+                ocr_result = await self.mcp_client.call_tool("extract_text", {
+                    "imageData": sensor_data['image']
+                })
+                if ocr_result.get("success"):
+                    return ocr_result.get("text", "")
+                else:
+                    return "Screen text extraction failed"
+            return "No screen image data"
+        
+        elif sensor == 'audio':
+            # Future: audio processing
+            return "Audio processing not implemented yet"
+        
+        elif sensor == 'camera':
+            # Future: camera processing  
+            return "Camera processing not implemented yet"
+        
+        elif sensor == 'microphone':
+            # Future: microphone processing
+            return "Microphone processing not implemented yet"
+        
+        else:
+            return f"Unknown sensor: {sensor}"
+    
+    def _combine_sensor_data(self, processed_data: Dict[str, str]) -> str:
+        """Combine data from multiple sensors into unified text"""
+        combined = []
+        for sensor, data in processed_data.items():
+            combined.append(f"[{sensor.upper()}]: {data}")
+        return "\n".join(combined)
+    
+    async def _process_agent_specific_data(self, result: str, processed_data: Dict) -> Dict:
+        """Process agent-specific data based on YAML configuration"""
+        custom_data = {}
+        
+        # Check if agent has focus-specific features (from YAML)
+        if self.config.get('focus_features'):
+            # Try to extract focus data from result - check if result contains JSON
+            try:
+                import json
+                import re
+                
+                # The result might be formatted as "ACTIVITY: {JSON}" or just "{JSON}"
+                json_text = result
+                
+                # Remove "ACTIVITY:" prefix if present
+                if result.startswith("ACTIVITY:"):
+                    json_text = result[9:].strip()
+                
+                # Look for JSON in the text
+                json_match = re.search(r'\{.*\}', json_text, re.DOTALL)
+                if json_match:
+                    focus_data = json.loads(json_match.group(0))
+                    
+                    # Update agent's custom data (for get_focus_summary)
+                    if 'focus_metrics' not in self.custom_data:
+                        self.custom_data['focus_metrics'] = []
+                    
+                    self.custom_data['focus_metrics'].append({
+                        'timestamp': time.time(),
+                        'focus_level': focus_data.get('focus_level', 'medium'),
+                        'productivity_score': focus_data.get('productivity_score', 0.5),
+                        'category': focus_data.get('category', 'neutral'),
+                        'suggestion': focus_data.get('suggestion', '')
+                    })
+                    
+                    # Keep only last 50 entries
+                    if len(self.custom_data['focus_metrics']) > 50:
+                        self.custom_data['focus_metrics'] = self.custom_data['focus_metrics'][-50:]
+                    
+                    custom_data = focus_data
+                    logger.info(f"📊 Focus data processed: {focus_data.get('focus_level')} focus, {focus_data.get('productivity_score', 0.0):.2f} productivity")
+                else:
+                    logger.warning(f"No JSON found in result: {result[:100]}...")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to parse focus data from: {result[:100]}... Error: {e}")
+                # Fallback for non-JSON results
+                custom_data = {"type": "activity_only", "data": result}
+        
+        return custom_data
+    
+    def get_focus_summary(self) -> Dict[str, Any]:
+        """Get current focus session summary from custom_data"""
+        focus_metrics = self.custom_data.get('focus_metrics', [])
+        
+        if not focus_metrics:
+            return {
+                'productivity_score': 0.0,
+                'focus_sessions': 0,
+                'distractions': 0,
+                'total_focus_time': 0,
+                'status': 'no_data'
+            }
+        
+        recent_metrics = focus_metrics[-10:]  # Last 10 entries
+        avg_productivity = sum(m.get('productivity_score', 0.0) for m in recent_metrics) / len(recent_metrics)
+        
+        focus_levels = [m.get('focus_level', 'medium') for m in recent_metrics]
+        dominant_focus = max(set(focus_levels), key=focus_levels.count) if focus_levels else 'medium'
+        
+        # Calculate focus sessions (consecutive periods of medium/high focus)
+        focus_sessions = 0
+        in_focus_session = False
+        for metric in focus_metrics:
+            if metric.get('focus_level') in ['medium', 'high']:
+                if not in_focus_session:
+                    focus_sessions += 1
+                    in_focus_session = True
+            else:
+                in_focus_session = False
+        
+        # Calculate total focus time (approximate)
+        focus_entries = [m for m in focus_metrics if m.get('focus_level') in ['medium', 'high']]
+        total_focus_time = len(focus_entries) * 60  # 60 seconds per entry
+        
+        # Count distractions
+        distractions = len([m for m in focus_metrics if m.get('category') == 'distraction'])
+        
+        return {
+            'productivity_score': avg_productivity,
+            'focus_sessions': focus_sessions,
+            'distractions': distractions,
+            'total_focus_time': total_focus_time,
+            'dominant_focus_level': dominant_focus,
+            'total_sessions': len(focus_metrics),
+            'current_suggestion': recent_metrics[-1].get('suggestion', '') if recent_metrics else ''
+        }
+    
+    # Legacy method for backward compatibility with API
+    async def process_image(self, image_data: str, timestamp: str) -> Dict[str, Any]:
+        """Legacy method - delegates to process_input"""
+        input_data = {"screen": {"image": image_data}}
+        result = await self.process_input(input_data, timestamp)
+        
+        # Convert to legacy format
+        return {
+            "activity": result["result"],
+            "confidence": result["confidence"],
+            "processing_time": result["processing_time"],
+            "agent_reasoning": result["agent_reasoning"],
+            "timestamp": timestamp
+        }
     
     async def start_monitoring(self):
         """Start the 60-second activity monitoring loop"""
@@ -695,117 +1167,10 @@ async def main():
     return 0
 
 
-class FocusAssistantAgent(ActivityTrackingAgent):
-    """Focus Assistant Agent - extends ActivityTrackingAgent with focus-specific features"""
-    
-    def __init__(self, config_path: str):
-        super().__init__(config_path)
-        self.focus_metrics = []
-        self.distraction_count = 0
-        self.productivity_score = 0.0
-        
-    async def _process_activity_result(self, result: str) -> Dict[str, Any]:
-        """Process focus-specific results"""
-        try:
-            import json
-            import re
-            
-            # Extract JSON from "ACTIVITY: {JSON}" format
-            json_str = result
-            if result.startswith("ACTIVITY:"):
-                # Remove "ACTIVITY:" prefix and extract JSON
-                json_str = result[9:].strip()
-            
-            # Try to find JSON in the string if it's not pure JSON
-            if not json_str.startswith('{'):
-                json_match = re.search(r'\{.*\}', result, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    raise json.JSONDecodeError("No JSON found", result, 0)
-            
-            # Parse JSON
-            focus_data = json.loads(json_str)
-            
-            # Update focus metrics
-            self.productivity_score = focus_data.get('productivity_score', 0.0)
-            
-            if focus_data.get('category') == 'distraction':
-                self.distraction_count += 1
-            else:
-                self.distraction_count = max(0, self.distraction_count - 1)
-            
-            # Store focus metrics
-            self.focus_metrics.append({
-                'timestamp': time.time(),
-                'focus_level': focus_data.get('focus_level'),
-                'productivity_score': self.productivity_score,
-                'category': focus_data.get('category'),
-                'suggestion': focus_data.get('suggestion')
-            })
-            
-            # Keep only last 50 entries
-            if len(self.focus_metrics) > 50:
-                self.focus_metrics = self.focus_metrics[-50:]
-            
-            logger.info(f"📊 Focus metrics updated: productivity={self.productivity_score:.2f}, category={focus_data.get('category')}")
-            return focus_data
-            
-        except (json.JSONDecodeError, AttributeError) as e:
-            logger.warning(f"Failed to parse focus JSON from: {result[:100]}... Error: {e}")
-            # Fallback - return basic activity structure
-            return {
-                'activity': result,
-                'focus_level': 'medium',
-                'productivity_score': 0.5,
-                'category': 'unknown',
-                'suggestion': 'Unable to parse focus data'
-            }
-    
-    def get_focus_summary(self) -> Dict[str, Any]:
-        """Get current focus session summary"""
-        if not self.focus_metrics:
-            return {
-                'productivity_score': 0.0,
-                'focus_sessions': 0,
-                'distractions': 0,
-                'total_focus_time': 0,
-                'status': 'no_data'
-            }
-        
-        recent_metrics = self.focus_metrics[-10:]  # Last 10 entries
-        avg_productivity = sum(m['productivity_score'] for m in recent_metrics) / len(recent_metrics)
-        
-        focus_levels = [m['focus_level'] for m in recent_metrics]
-        dominant_focus = max(set(focus_levels), key=focus_levels.count)
-        
-        # Calculate focus sessions (consecutive periods of medium/high focus)
-        focus_sessions = 0
-        in_focus_session = False
-        for metric in self.focus_metrics:
-            if metric.get('focus_level') in ['medium', 'high']:
-                if not in_focus_session:
-                    focus_sessions += 1
-                    in_focus_session = True
-            else:
-                in_focus_session = False
-        
-        # Calculate total focus time (approximate, assuming 60 second intervals)
-        focus_entries = [m for m in self.focus_metrics if m.get('focus_level') in ['medium', 'high']]
-        total_focus_time = len(focus_entries) * 60  # 60 seconds per entry
-        
-        return {
-            'productivity_score': avg_productivity,
-            'focus_sessions': focus_sessions,
-            'distractions': self.distraction_count,
-            'total_focus_time': total_focus_time,
-            'dominant_focus_level': dominant_focus,
-            'total_sessions': len(self.focus_metrics),
-            'current_suggestion': recent_metrics[-1].get('suggestion', '') if recent_metrics else ''
-        }
+# Type alias for backward compatibility
+ActivityTrackingAgent = ConfigurableAgent
 
-
-# Missing in agent.py - needed for Focus Assistant
+# Missing in agent.py - needed for Focus Assistant  
 def store_focus_metrics(metrics: Dict[str, Any], agent_id: str = "vygil-focus-assistant"):
     """Store focus metrics to a JSON file for persistence"""
     try:

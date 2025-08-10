@@ -8,6 +8,19 @@ agent:
   loop_interval: 20  # seconds between activity captures
   max_retries: 3
   timeout: 10  # seconds for each operation
+
+# Sensor configuration - defines which inputs this agent can use
+sensors:
+  screen:
+    enabled: true
+    priority: 1  # Primary sensor for this agent
+    description: "Captures and analyzes screen content for activity classification"
+  audio:
+    enabled: false  # This agent focuses only on visual activity
+  camera:
+    enabled: false
+  microphone:
+    enabled: false
   
 instructions:
   system_prompt: |
@@ -74,18 +87,18 @@ mcp_server:
       description: "Retrieves last N activities for context"
 
 llm:
-  provider: "openai"  # options: "openai", "anthropic", "fireworks"
-  model: "gpt-4o-mini"  # fast and cost-effective for classification
+  provider: "gemini"  # options: "openai", "anthropic", "gemini"
+  model: "gemini-1.5-flash"  # fast and cost-effective for classification
   temperature: 0.1  # low for consistent classification
   max_tokens: 50
   timeout: 10  # seconds
 
   # Backup providers (fallback if primary fails)
   fallback_providers:
+    - provider: "openai"
+      model: "gpt-4o-mini"
     - provider: "anthropic"
       model: "claude-3-haiku-20240307"
-    - provider: "fireworks"
-      model: "accounts/fireworks/models/llama-v3-8b-instruct"
 
 privacy:
   screen_permission_required: true
