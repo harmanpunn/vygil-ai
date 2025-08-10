@@ -159,7 +159,7 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
       const base64Data = dataUrl.split(',')[1]
       
       // Send to backend to save in screenshots directory
-      const response = await fetch('http://localhost:8000/api/save-screenshot', {
+      const response = await fetch('/api/save-screenshot', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -244,9 +244,9 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
   // Send image to MCP server for processing
   const processActivity = async (base64Image) => {
     try {
-      console.log('🌐 Making API call to: http://localhost:8000/api/process-activity')
+      console.log('🌐 Making API call to: /api/process-activity')
       
-      const response = await fetch('http://localhost:8000/api/process-activity', {
+      const response = await fetch('/api/process-activity', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

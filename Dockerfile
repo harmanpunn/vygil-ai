@@ -19,10 +19,17 @@ ENV PATH="/root/.local/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
+# Set default port for Railway
+ENV PORT=5173
+
 # Copy package files for dependency installation
 COPY pyproject.toml uv.lock ./
 COPY frontend/package*.json ./frontend/
 COPY mcp-server/package*.json ./mcp-server/
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 
 # Install Node.js dependencies
 RUN cd frontend && npm install
