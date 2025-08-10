@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Get port from environment variable or default to 5173
+PORT=${PORT:-5173}
+
 # Function to start a service in the background
 start_service() {
     local name=$1
@@ -37,9 +40,12 @@ trap cleanup SIGTERM SIGINT
 # Activate Python virtual environment
 source .venv/bin/activate
 
-# Start Frontend
-echo "Starting Frontend..."
+# Start Frontend with explicit PORT environment variable
+echo "Starting Frontend on port $PORT..."
 cd frontend
+# Export PORT so Vite can see it
+export PORT=$PORT
+echo "Frontend will use PORT: $PORT"
 npm run dev &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > /tmp/frontend.pid
@@ -54,7 +60,7 @@ echo $API_PID > /tmp/api.pid
 cd ..
 
 echo "All services started!"
-echo "Frontend PID: $FRONTEND_PID"
+echo "Frontend PID: $FRONTEND_PID (Port: $PORT)"
 echo "API PID: $API_PID"
 
 # Wait for all background processes
