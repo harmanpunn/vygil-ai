@@ -20,14 +20,11 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /app
 
 # Copy package files for dependency installation
-COPY package*.json ./
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY frontend/package*.json ./frontend/
 COPY mcp-server/package*.json ./mcp-server/
-COPY .env .env
 
 # Install Node.js dependencies
-RUN npm install
 RUN cd frontend && npm install
 RUN cd mcp-server && npm install
 
@@ -39,7 +36,6 @@ RUN cd mcp-server && npm run build
 
 # Set up Python environment
 RUN uv sync
-RUN uv venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Create necessary directories
@@ -50,7 +46,7 @@ EXPOSE 8000 5173
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/api/health || exit 1
+    CMD curl -f http://localhost:8000/api/health || exit 1
 
 # Start script
 COPY start-services.sh /app/start-services.sh
