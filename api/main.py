@@ -100,14 +100,13 @@ app.add_middleware(
 # Global state
 config = None
 llm_processor = None
-mcp_client = None
 agent_manager = None
 activity_logs: List[ActivityLog] = []
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup"""
-    global config, llm_processor, mcp_client, agent_manager
+    global config, llm_processor, agent_manager
     
     try:
         # Initialize Agent Manager first
@@ -119,9 +118,6 @@ async def startup_event():
         
         # Initialize LLM processor
         llm_processor = LLMProcessor(config)
-        
-        # Initialize MCP client
-        mcp_client = MCPClient(config)
         
         logger.info("Vygil API server started successfully")
         logger.info(f"Discovered {len(agent_manager.get_available_agents())} agents")
@@ -137,7 +133,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        agent_ready=llm_processor is not None and mcp_client is not None and agent_manager is not None
+        agent_ready=llm_processor is not None and agent_manager is not None
     )
 
 @app.post("/api/process-activity", response_model=ActivityResponse)
@@ -146,7 +142,7 @@ async def process_activity(request: ActivityRequest):
     start_time = asyncio.get_event_loop().time()
     
     try:
-        if not llm_processor or not mcp_client:
+        if not llm_processor:
             raise HTTPException(status_code=503, detail="Server not ready")
         
         # Decode base64 image (for future OCR processing)
@@ -228,16 +224,23 @@ Decide which tool to use first. Respond with JSON:
         extracted_text = ""
         if chosen_tool == 'extract_text':
             logger.info(f"🔧 Agent executing chosen tool: {chosen_tool}")
-            ocr_result = await mcp_client.call_tool("extract_text", {
-                "imageData": image_base64
-            })
             
-            if ocr_result.get("success"):
-                extracted_text = ocr_result.get("text", "")
-                logger.info(f"✅ Agent's tool succeeded: extracted {len(extracted_text)} characters")
-            else:
-                logger.warning(f"⚠️ Agent's tool failed: {ocr_result.get('error')}")
-                extracted_text = "Minimal screen content detected"
+            # Create temporary MCP client for this request to handle concurrency
+            temp_client = MCPClient(config)
+            try:
+                await temp_client.initialize()
+                ocr_result = await temp_client.call_tool("extract_text", {
+                    "imageData": image_base64
+                })
+                
+                if ocr_result.get("success"):
+                    extracted_text = ocr_result.get("text", "")
+                    logger.info(f"✅ Agent's tool succeeded: extracted {len(extracted_text)} characters")
+                else:
+                    logger.warning(f"⚠️ Agent's tool failed: {ocr_result.get('error')}")
+                    extracted_text = "Minimal screen content detected"
+            finally:
+                await temp_client.cleanup()
         else:
             # Agent chose a different tool - handle accordingly
             extracted_text = "Agent chose non-OCR tool"
