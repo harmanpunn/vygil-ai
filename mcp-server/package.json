@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/vygil-mcp-server.js",
     "dev": "npx ts-node --esm src/vygil-mcp-server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"MCP server uses stdio transport. Test via agent/mcp_client.py integration\"",
+    "test:integration": "echo \"Run agent tests to verify MCP server functionality\""
   },
   "keywords": [
     "mcp",
@@ -19,17 +20,13 @@
   "license": "ISC",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.1",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
     "jimp": "^0.22.10",
     "screenshot-desktop": "^1.15.1",
-    "socket.io": "^4.8.1",
     "tesseract.js": "^6.0.1",
     "uuid": "^8.3.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/express": "^4.17.23",
     "@types/jimp": "^0.2.28",
     "@types/node": "^16.18.126",
     "@types/screenshot-desktop": "^1.15.0",
