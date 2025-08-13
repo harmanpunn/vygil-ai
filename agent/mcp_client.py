@@ -110,10 +110,11 @@ class MCPClient:
                     logger.error(f"MCP server error: {error}")
                     return {"success": False, "error": error.get("message", "Unknown error")}
                 
-                # Validate request ID - strict validation, fail on mismatch
+                # Validate request ID - log mismatch but don't crash
                 response_id = result.get("id")
                 if response_id != request_id:
-                    raise Exception(f"MCP response ID mismatch: expected {request_id}, got {response_id}. This indicates a concurrency issue.")
+                    logger.error(f"MCP response ID mismatch: expected {request_id}, got {response_id}. This may indicate a concurrency issue.")
+                    return {"success": False, "error": f"Response ID mismatch - expected {request_id}, got {response_id}"}
                 
                 # Return successful result
                 return {"success": True, "data": result.get("result", {})}
