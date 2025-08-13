@@ -156,7 +156,7 @@ class LLMProcessor:
                 except ImportError:
                     logger.warning("Anthropic package not available for fallback")
     
-    async def classify_activity(self, screen_text: str, agent_id: str) -> Tuple[str, float]:
+    async def classify_activity(self, screen_text: str, agent_id: str, return_raw: bool = False) -> Tuple[str, float] | Tuple[str, float, str]:
         """
         Classify user activity based on screen text
         Returns: (activity_description, confidence_score)
@@ -182,14 +182,20 @@ class LLMProcessor:
 {truncated_text}
 </Screen Content>"""
 
+        raw_response_text: Optional[str] = None
+
         # Try primary provider first
         primary_provider = self.llm_config.get('provider', 'openai')
         if primary_provider in self.clients:
             try:
                 response = await self._query_llm(primary_provider, user_prompt, system_prompt)
                 if response:
+                    raw_response_text = response
                     confidence = self._calculate_confidence(screen_text, response)
-                    return self._format_response(response, agent_id), confidence
+                    formatted = self._format_response(response, agent_id)
+                    if return_raw:
+                        return formatted, confidence, response
+                    return formatted, confidence
             except Exception as e:
                 logger.warning(f"Primary LLM provider {primary_provider} failed: {e}")
         
@@ -200,13 +206,19 @@ class LLMProcessor:
                 try:
                     response = await self._query_llm(provider, user_prompt, system_prompt)
                     if response:
+                        raw_response_text = response
                         confidence = self._calculate_confidence(screen_text, response)
-                        return self._format_response(response, agent_id), confidence
+                        formatted = self._format_response(response, agent_id)
+                        if return_raw:
+                            return formatted, confidence, response
+                        return formatted, confidence
                 except Exception as e:
                     logger.warning(f"Fallback LLM provider {provider} failed: {e}")
         
         # All providers failed
         logger.error("All LLM providers failed")
+        if return_raw:
+            return "ACTIVITY: LLM analysis failed", 0.0, (raw_response_text or "")
         return "ACTIVITY: LLM analysis failed", 0.0
     
     async def _query_llm(self, provider: str, user_prompt: str, system_prompt: str = "") -> Optional[str]:
@@ -334,287 +346,33 @@ class LLMProcessor:
 
 
 class ActivityTrackingAgent:
-    """Main activity tracking agent implementing the MVP flow"""
-    
+    """Deprecated: retained for import compatibility. Use GenericAgent instead."""
     def __init__(self, config_path: str = "config/activity-tracking-agent.yaml"):
         self.config = ConfigLoader.load_config(config_path)
         self.agent_config = self.config.get('agent', {})
         self.agent_id = self.agent_config.get('id', 'vygil-activity-tracker')
-        
-        # Initialize components
         self.llm_processor = LLMProcessor(self.config)
         self.mcp_client = MCPClient(self.config)
-        
-        # Agent state
         self.running = False
         self.loop_interval = self.agent_config.get('loop_interval', 20)
         self.max_retries = self.agent_config.get('max_retries', 3)
         self.consecutive_failures = 0
-        
-        # Statistics
         self.total_iterations = 0
         self.successful_iterations = 0
         self.start_time = None
-        
-        logger.info(f"Agent initialized: {self.agent_config.get('name', 'Vygil Agent')}")
-        logger.info(f"Loop interval: {self.loop_interval} seconds")
-    
-    async def start_monitoring(self):
-        """Start the 60-second activity monitoring loop"""
-        if self.running:
-            logger.warning("Agent already running")
-            return
-        
-        logger.info("🚀 Starting Vygil Activity Tracking Agent...")
-        
-        # Check API keys
-        if not self._check_api_keys():
-            logger.error("No LLM API keys found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY")
-            return
-        
-        # Request screen permission (placeholder for MVP)
-        self._request_screen_permission()
-        
-        self.running = True
-        self.start_time = datetime.now()
-        
-        try:
-            while self.running:
-                await self._execute_monitoring_cycle()
-                
-                # Check for too many consecutive failures
-                max_failures = self.config.get('error_handling', {}).get('max_consecutive_failures', 5)
-                if self.consecutive_failures >= max_failures:
-                    logger.error(f"Stopping agent after {self.consecutive_failures} consecutive failures")
-                    break
-                
-                # Wait for next cycle
-                await asyncio.sleep(self.loop_interval)
-                
-        except KeyboardInterrupt:
-            logger.info("Received interrupt signal")
-        except Exception as e:
-            logger.error(f"Agent loop error: {e}")
-        finally:
-            await self.stop_monitoring()
-    
-    async def stop_monitoring(self):
-        """Stop the activity monitoring"""
-        logger.info("🛑 Stopping activity tracking agent...")
-        self.running = False
-        
-        # Print final statistics
-        stats = self.get_statistics()
-        logger.info(f"Final statistics: {stats}")
-    
-    async def _execute_monitoring_cycle(self):
-        """Execute one complete monitoring cycle following MVP flow"""
-        self.total_iterations += 1
-        cycle_start = time.time()
-        
-        try:
-            logger.debug(f"Starting monitoring cycle {self.total_iterations}")
-            
-            # Step 1: Capture screen (via MCP server)
-            screen_result = await self.mcp_client.call_tool("screen_capture")
-            if not screen_result.get("success"):
-                raise Exception(f"Screen capture failed: {screen_result.get('error')}")
-            
-            # Step 2: Extract text from screen (OCR via MCP server)
-            ocr_result = await self.mcp_client.call_tool("extract_text", {
-                "image_data": screen_result.get("image_base64")
-            })
-            if not ocr_result.get("success"):
-                raise Exception(f"OCR extraction failed: {ocr_result.get('error')}")
-            
-            screen_text = ocr_result.get("text", "")
-            
-            # Step 3: Classify activity using LLM (with memory context)
-            activity_description, confidence = await self.llm_processor.classify_activity(screen_text, self.agent_id)
-            
-            # Step 4: Execute autonomous code (agentic behavior)
-            autonomous_code = self.config.get('code', '')
-            if autonomous_code:
-                execute_autonomous_code(autonomous_code, activity_description, self.agent_id)
-            
-            # Step 5: Log activity (via MCP server)
-            log_result = await self.mcp_client.call_tool("log_activity", {
-                "description": activity_description,
-                "confidence": confidence,
-                "screen_text_length": len(screen_text),
-                "processing_time": time.time() - cycle_start
-            })
-            
-            if log_result.get("success"):
-                self.successful_iterations += 1
-                self.consecutive_failures = 0
-                
-                # Log successful cycle
-                cycle_time = time.time() - cycle_start
-                logger.info(f"✅ [{datetime.now().strftime('%H:%M:%S')}] {activity_description} "
-                          f"(confidence: {confidence:.2f}, time: {cycle_time:.1f}s)")
-            else:
-                raise Exception(f"Activity logging failed: {log_result.get('error')}")
-                
-        except Exception as e:
-            self.consecutive_failures += 1
-            logger.error(f"❌ Monitoring cycle {self.total_iterations} failed: {e}")
-            
-            # Wait before retry
-            retry_delay = self.config.get('error_handling', {}).get('retry_delay', 2)
-            await asyncio.sleep(retry_delay)
-    
-    def _check_api_keys(self) -> bool:
-        """Check if required API keys are available"""
-        return bool(os.getenv('OPENAI_API_KEY') or os.getenv('ANTHROPIC_API_KEY'))
-    
-    def _request_screen_permission(self):
-        """Request screen recording permission (placeholder for MVP)"""
-        consent_msg = self.config.get('privacy', {}).get('user_consent_message', 
-                                                        'Screen recording permission required')
-        logger.info(f"📺 {consent_msg}")
-        logger.info("Screen permission granted (MVP mode)")
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get agent performance statistics"""
-        runtime = (datetime.now() - self.start_time).total_seconds() if self.start_time else 0
-        success_rate = (self.successful_iterations / self.total_iterations * 100) if self.total_iterations > 0 else 0
-        
-        return {
-            "agent_name": self.agent_config.get('name', 'Vygil Agent'),
-            "runtime_seconds": round(runtime, 1),
-            "total_iterations": self.total_iterations,
-            "successful_iterations": self.successful_iterations,
-            "success_rate_percent": round(success_rate, 1),
-            "consecutive_failures": self.consecutive_failures,
-            "is_running": self.running
-        }
+        logger.info("ActivityTrackingAgent is deprecated. Switch to GenericAgent.")
 
 
 async def main():
     """Main entry point for the activity tracking agent"""
-    logger.info("🎯 Vygil Activity Tracking Agent MVP")
-    
-    try:
-        # Create and start agent
-        agent = ActivityTrackingAgent()
-        await agent.start_monitoring()
-        
-    except Exception as e:
-        logger.error(f"Failed to start agent: {e}")
-        return 1
-    
+    logger.info("ActivityTrackingAgent is deprecated. Use API with GenericAgent.")
     return 0
 
 
 class FocusAssistantAgent(ActivityTrackingAgent):
-    """Focus Assistant Agent - extends ActivityTrackingAgent with focus-specific features"""
-    
+    """Deprecated wrapper to keep import compatibility. Use GenericAgent."""
     def __init__(self, config_path: str):
         super().__init__(config_path)
-        self.focus_metrics = []
-        self.distraction_count = 0
-        self.productivity_score = 0.0
-        
-    async def _process_activity_result(self, result: str) -> Dict[str, Any]:
-        """Process focus-specific results"""
-        try:
-            import json
-            import re
-            
-            # Extract JSON from "ACTIVITY: {JSON}" format
-            json_str = result
-            if result.startswith("ACTIVITY:"):
-                # Remove "ACTIVITY:" prefix and extract JSON
-                json_str = result[9:].strip()
-            
-            # Try to find JSON in the string if it's not pure JSON
-            if not json_str.startswith('{'):
-                json_match = re.search(r'\{.*\}', result, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    raise json.JSONDecodeError("No JSON found", result, 0)
-            
-            # Parse JSON
-            focus_data = json.loads(json_str)
-            
-            # Update focus metrics
-            self.productivity_score = focus_data.get('productivity_score', 0.0)
-            
-            if focus_data.get('category') == 'distraction':
-                self.distraction_count += 1
-            else:
-                self.distraction_count = max(0, self.distraction_count - 1)
-            
-            # Store focus metrics
-            self.focus_metrics.append({
-                'timestamp': time.time(),
-                'focus_level': focus_data.get('focus_level'),
-                'productivity_score': self.productivity_score,
-                'category': focus_data.get('category'),
-                'suggestion': focus_data.get('suggestion')
-            })
-            
-            # Keep only last 50 entries
-            if len(self.focus_metrics) > 50:
-                self.focus_metrics = self.focus_metrics[-50:]
-            
-            logger.info(f"📊 Focus metrics updated: productivity={self.productivity_score:.2f}, category={focus_data.get('category')}")
-            return focus_data
-            
-        except (json.JSONDecodeError, AttributeError) as e:
-            logger.warning(f"Failed to parse focus JSON from: {result[:100]}... Error: {e}")
-            # Fallback - return basic activity structure
-            return {
-                'activity': result,
-                'focus_level': 'medium',
-                'productivity_score': 0.5,
-                'category': 'unknown',
-                'suggestion': 'Unable to parse focus data'
-            }
-    
-    def get_focus_summary(self) -> Dict[str, Any]:
-        """Get current focus session summary"""
-        if not self.focus_metrics:
-            return {
-                'productivity_score': 0.0,
-                'focus_sessions': 0,
-                'distractions': 0,
-                'total_focus_time': 0,
-                'status': 'no_data'
-            }
-        
-        recent_metrics = self.focus_metrics[-10:]  # Last 10 entries
-        avg_productivity = sum(m['productivity_score'] for m in recent_metrics) / len(recent_metrics)
-        
-        focus_levels = [m['focus_level'] for m in recent_metrics]
-        dominant_focus = max(set(focus_levels), key=focus_levels.count)
-        
-        # Calculate focus sessions (consecutive periods of medium/high focus)
-        focus_sessions = 0
-        in_focus_session = False
-        for metric in self.focus_metrics:
-            if metric.get('focus_level') in ['medium', 'high']:
-                if not in_focus_session:
-                    focus_sessions += 1
-                    in_focus_session = True
-            else:
-                in_focus_session = False
-        
-        # Calculate total focus time (approximate, assuming 60 second intervals)
-        focus_entries = [m for m in self.focus_metrics if m.get('focus_level') in ['medium', 'high']]
-        total_focus_time = len(focus_entries) * 60  # 60 seconds per entry
-        
-        return {
-            'productivity_score': avg_productivity,
-            'focus_sessions': focus_sessions,
-            'distractions': self.distraction_count,
-            'total_focus_time': total_focus_time,
-            'dominant_focus_level': dominant_focus,
-            'total_sessions': len(self.focus_metrics),
-            'current_suggestion': recent_metrics[-1].get('suggestion', '') if recent_metrics else ''
-        }
 
 
 # Missing in agent.py - needed for Focus Assistant
