@@ -8,7 +8,8 @@ import logging
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
-from agent import ActivityTrackingAgent, ConfigLoader, FocusAssistantAgent
+from agent import ConfigLoader
+from generic_agent import GenericAgent
 
 logger = logging.getLogger("agent-manager")
 
@@ -112,15 +113,10 @@ class AgentManager:
                 if hasattr(self.current_agent, 'stop_monitoring'):
                     await self.current_agent.stop_monitoring()
             
-            # Create new agent instance
+            # Create new agent instance (GenericAgent)
             agent_info = self.available_agents[agent_id]
             config_file = agent_info['config_file']
-            
-            # Create the appropriate agent type
-            if 'focus-assistant' in agent_id:
-                self.current_agent = FocusAssistantAgent(config_file)
-            else:
-                self.current_agent = ActivityTrackingAgent(config_file)
+            self.current_agent = GenericAgent.from_yaml(config_file)
             
             self.current_agent_id = agent_id
             logger.info(f"Selected agent: {agent_info['name']}")
@@ -137,15 +133,10 @@ class AgentManager:
             return False
             
         try:
-            # Create new agent instance
+            # Create new agent instance (GenericAgent)
             agent_info = self.available_agents[agent_id]
             config_file = agent_info['config_file']
-            
-            # Create the appropriate agent type
-            if 'focus-assistant' in agent_id:
-                self.current_agent = FocusAssistantAgent(config_file)
-            else:
-                self.current_agent = ActivityTrackingAgent(config_file)
+            self.current_agent = GenericAgent.from_yaml(config_file)
             
             self.current_agent_id = agent_id
             logger.info(f"Selected agent: {agent_info['name']}")

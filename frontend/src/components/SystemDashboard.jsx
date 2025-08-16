@@ -107,7 +107,15 @@ const SystemDashboard = () => {
               Refresh
             </button>
             <button 
-              onClick={() => fetch('/api/activities', { method: 'DELETE' })}
+              onClick={async () => {
+                try {
+                  await fetch('/api/activities', { method: 'DELETE' })
+                  // Broadcast a custom event so ActivityTracker can reset UI immediately
+                  window.dispatchEvent(new CustomEvent('vygil:clear-logs'))
+                } catch (e) {
+                  console.error('Failed to clear logs', e)
+                }
+              }}
               className="px-4 py-2.5 bg-accents-coral/10 text-accents-coral rounded-lg text-sm hover:bg-accents-coral/15 transition-all duration-200 hover:transform hover:-translate-y-0.5 font-medium border border-accents-coral/20"
             >
               Clear Logs

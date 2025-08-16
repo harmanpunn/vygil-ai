@@ -459,7 +459,23 @@ const ActivityTracker = ({ onStatusChange, currentAgent }) => {
   // Clear activity log
   const clearActivities = () => {
     setActivities([])
+    setFocusSummary(null)
+    setSessionTime(0)
+    setNextCapture(null)
   }
+
+  // Listen for global clear-logs to reset UI immediately
+  useEffect(() => {
+    const handleClear = () => {
+      setActivities([])
+      setFocusSummary(null)
+      setSessionTime(0)
+      setNextCapture(null)
+      setStatus('Logs cleared')
+    }
+    window.addEventListener('vygil:clear-logs', handleClear)
+    return () => window.removeEventListener('vygil:clear-logs', handleClear)
+  }, [])
 
   // Update session timer and countdown
   useEffect(() => {

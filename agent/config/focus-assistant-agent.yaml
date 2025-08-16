@@ -8,6 +8,7 @@ agent:
   loop_interval: 20 
   max_retries: 3
   timeout: 10  # seconds for each operation
+  sensors: ["screen"]
   
 instructions:
   system_prompt: |
@@ -144,26 +145,27 @@ memory: ""
 
 # Autonomous code for focus tracking
 code: |
-  # Parse the JSON response from LLM
+  # Parse compact JSON from API (preferred), else fallback to legacy text
   import json
+  focus_level = 'medium'
+  productivity_score = 0.5
+  category = 'neutral'
+  suggestion = ''
+  activity = ''
   try:
       result = json.loads(activity_result)
-      focus_level = result.get('focus_level', 'unknown')
-      productivity_score = result.get('productivity_score', 0.0)
-      category = result.get('category', 'neutral')
-      suggestion = result.get('suggestion', '')
-      activity = result.get('activity', '')
-  except:
-      # Fallback if JSON parsing fails
-      focus_level = 'medium'
-      productivity_score = 0.5
-      category = 'neutral'
-      suggestion = 'Continue your current activity'
+      focus_level = result.get('focus_level', focus_level)
+      productivity_score = float(result.get('productivity_score', productivity_score))
+      category = result.get('category', category)
+      suggestion = result.get('suggestion', suggestion)
+      activity = result.get('activity', activity)
+  except Exception:
       activity = activity_result
   
   # Store focus event in memory
   memory = get_memory()
   timestamp = get_current_time()
+  # Compact, one-line memory entry
   focus_entry = f"[{timestamp}] Focus: {focus_level} | Score: {productivity_score:.2f} | {category.upper()} | {activity}"
   
   # Update memory with focus tracking
@@ -178,3 +180,17 @@ code: |
   
   # Log focus metrics (the Focus Assistant agent handles internal metrics storage)
   print(f"📊 Focus metrics logged: {focus_level} focus, {productivity_score:.2f} productivity, {category} category")
+
+pipeline:
+  - tool_selection
+  - execute_tools
+  - analyze_results
+
+prompts:
+  tool_selection: |
+    Decide which first tool to run given inputs for focus assessment.
+    Inputs:
+    - Screen present: {has_screen}
+    Available tools:
+    {available_tools}
+    Return JSON: {"tool": "name", "reason": "why"}
