@@ -20,7 +20,7 @@ const NotificationSystem = ({ currentAgent, isActive }) => {
 
   // Mock distraction detection for demo purposes
   useEffect(() => {
-    if (!isActive || currentAgent !== 'focus-assistant-agent' || !notificationsEnabled) {
+    if (!isActive || currentAgent !== 'vygil-focus-assistant' || !notificationsEnabled) {
       return
     }
 
@@ -72,7 +72,7 @@ const NotificationSystem = ({ currentAgent, isActive }) => {
     }
   }
 
-  if (currentAgent !== 'focus-assistant-agent') {
+  if (currentAgent !== 'vygil-focus-assistantt') {
     return null
   }
 

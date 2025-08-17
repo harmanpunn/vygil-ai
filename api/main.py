@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,8 +31,9 @@ load_dotenv()
 # Add agent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent'))
 
-from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code
-from agent_manager import AgentManager
+from agent import ConfigLoader, LLMProcessor, MCPClient, execute_autonomous_code, get_memory
+from agent_manager import AgentManager  # type: ignore
+from generic_agent import GenericAgent  # type: ignore
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -100,14 +101,13 @@ app.add_middleware(
 # Global state
 config = None
 llm_processor = None
-mcp_client = None
 agent_manager = None
 activity_logs: List[ActivityLog] = []
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize components on startup"""
-    global config, llm_processor, mcp_client, agent_manager
+    global config, llm_processor, agent_manager
     
     try:
         # Initialize Agent Manager first
@@ -119,9 +119,6 @@ async def startup_event():
         
         # Initialize LLM processor
         llm_processor = LLMProcessor(config)
-        
-        # Initialize MCP client
-        mcp_client = MCPClient(config)
         
         logger.info("Vygil API server started successfully")
         logger.info(f"Discovered {len(agent_manager.get_available_agents())} agents")
@@ -137,7 +134,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        agent_ready=llm_processor is not None and mcp_client is not None and agent_manager is not None
+        agent_ready=llm_processor is not None and agent_manager is not None
     )
 
 @app.post("/api/process-activity", response_model=ActivityResponse)
@@ -146,188 +143,70 @@ async def process_activity(request: ActivityRequest):
     start_time = asyncio.get_event_loop().time()
     
     try:
-        if not llm_processor or not mcp_client:
+        if not llm_processor:
             raise HTTPException(status_code=503, detail="Server not ready")
-        
-        # Decode base64 image (for future OCR processing)
-        try:
-            image_data = base64.b64decode(request.image)
-            logger.info(f"Received image data: {len(image_data)} bytes")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}")
-        
-        # 🤖 AGENTIC WORKFLOW: Let LLM decide which tools to use
-        logger.info("🤖 Starting agentic workflow - LLM will decide tools...")
-        
-        # Prepare image for agent
-        image_base64 = request.image if request.image.startswith('data:') else f"data:image/png;base64,{request.image}"
-        
-        # Create agentic context for LLM
-        available_tools = list(config.get('mcp_server', {}).get('tools', {}).keys())
 
-        logger.info(f"Available tools: {available_tools}")
-        
-        agentic_prompt = f"""
-You are an autonomous AI agent for activity tracking. Your goal is to analyze screen content and identify user activities.
-
-You have received:
-- Image data: {len(image_data)} bytes of base64 image
-- Goal: Track and classify user activity
-
-Available tools at your disposal:
-{chr(10).join(f'- {tool}: {config.get("mcp_server", {}).get("tools", {}).get(tool, {}).get("description", "")}' for tool in available_tools)}
-
-Decide which tool to use first. Respond with JSON:
-{{"tool": "tool_name", "reasoning": "why you chose this tool"}}
-"""
-        
-        logger.info(f"Agentic prompt:\n{agentic_prompt}")
-
-        # Let LLM decide which tool to use
-        logger.info("🧠 Agent deciding which tool to use...")
-        
-        # Use higher token limit for agentic decision-making
-        messages = [{"role": "user", "content": agentic_prompt}]
-        client = llm_processor.clients['openai']
-        
-        response = await asyncio.to_thread(
-            client.chat.completions.create,
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=150,  # Higher limit for JSON response
-            temperature=0.1,  # Low temperature for consistent JSON
-            timeout=15
-        )
-        tool_decision = response.choices[0].message.content.strip()
-        logger.info(f"🤖 Agent's raw decision: {tool_decision}")
-        
-        try:
-            import json
-            # Clean up the response in case it has extra text
-            tool_decision_clean = tool_decision.strip()
-            if not tool_decision_clean.startswith('{'):
-                # Extract JSON from the response if there's extra text
-                start = tool_decision_clean.find('{')
-                end = tool_decision_clean.rfind('}') + 1
-                if start != -1 and end > start:
-                    tool_decision_clean = tool_decision_clean[start:end]
-            
-            decision = json.loads(tool_decision_clean)
-            chosen_tool = decision.get('tool')
-            reasoning = decision.get('reasoning', 'No reasoning provided')
-            
-            logger.info(f"🎯 Agent decided: '{chosen_tool}' - Reasoning: {reasoning}")
-        except (json.JSONDecodeError, ValueError) as e:
-            # Fallback if JSON parsing fails
-            chosen_tool = 'extract_text'
-            reasoning = 'Fallback tool selection - JSON parsing failed'
-            logger.error(f"❌ Failed to parse agent decision: {tool_decision} - Error: {e}")
-            logger.warning("⚠️ Agent decision parsing failed, using fallback")
-        
-        # Execute the agent's chosen tool
-        extracted_text = ""
-        if chosen_tool == 'extract_text':
-            logger.info(f"🔧 Agent executing chosen tool: {chosen_tool}")
-            ocr_result = await mcp_client.call_tool("extract_text", {
-                "imageData": image_base64
-            })
-            
-            if ocr_result.get("success"):
-                extracted_text = ocr_result.get("text", "")
-                logger.info(f"✅ Agent's tool succeeded: extracted {len(extracted_text)} characters")
-            else:
-                logger.warning(f"⚠️ Agent's tool failed: {ocr_result.get('error')}")
-                extracted_text = "Minimal screen content detected"
-        else:
-            # Agent chose a different tool - handle accordingly
-            extracted_text = "Agent chose non-OCR tool"
-                    
-        # Fallback if agentic workflow fails
-        if not extracted_text or len(extracted_text.strip()) < 5:
-            logger.warning("⚠️ Agentic tool execution failed, using fallback")
-            extracted_text = "Screen content with interface elements"
-        
-        # Ensure we have some text to process
-        if not extracted_text or len(extracted_text.strip()) < 5:
-            extracted_text = "Screen content with interface elements and text"
-        
-        # Process with LLM
-        logger.info("🤖 Calling LLM processor...")
-        
-        # Get currently selected agent and use agent-specific configuration
+        # Resolve current agent YAML and create GenericAgent
         current_agent_info = agent_manager.get_current_agent_info()
-        current_agent = agent_manager.get_current_agent()
         if current_agent_info:
-            agent_id = current_agent_info['id']
-            logger.info(f"Using current agent: {current_agent_info['name']} ({agent_id})")
-            
-            # Use the current agent's configuration for LLM processing
-            agent_config = current_agent_info.get('config', config)
+            agent_yaml_path = current_agent_info.get('config_file')
+            generic_agent = GenericAgent.from_yaml(agent_yaml_path)
+            logger.info(f"Using agent from YAML: {current_agent_info['name']} ({current_agent_info['id']})")
         else:
-            agent_id = "vygil-activity-tracker"  # Fallback
-            agent_config = config
-            logger.warning("No current agent selected, using fallback")
-            
-        # Create agent-specific LLM processor
-        agent_llm_processor = LLMProcessor(agent_config)
-        
-        # For Focus Assistant, we need the raw LLM response before formatting
-        if current_agent and hasattr(current_agent, '_process_activity_result'):
-            logger.info("🎯 Using Focus Assistant - getting raw LLM response...")
-            
-            # Get raw response from LLM without formatting
-            system_prompt = agent_config.get('instructions', {}).get('system_prompt', '')
-            if system_prompt:
-                # Inject memory context into prompt
-                from agent import inject_memory_context
-                system_prompt = inject_memory_context(system_prompt, agent_id)
-                
-                user_prompt = f"""<Screen Content>
-{extracted_text[:2000]}
-</Screen Content>"""
-                
-                # Query LLM directly for raw JSON response
-                raw_response = await agent_llm_processor._query_llm(
-                    agent_llm_processor.llm_config.get('provider', 'openai'),
-                    user_prompt, 
-                    system_prompt
-                )
-                
-                if raw_response:
-                    logger.info(f"🎯 Raw LLM response for Focus Assistant: {raw_response[:100]}...")
-                    
-                    # Process with Focus Assistant
-                    try:
-                        focus_result = await current_agent._process_activity_result(raw_response)
-                        logger.info(f"✅ Focus metrics updated: {focus_result}")
-                        
-                        # Format the response for UI display
-                        activity = agent_llm_processor._format_response(raw_response, agent_id)
-                        confidence = agent_llm_processor._calculate_confidence(extracted_text, raw_response)
-                    except Exception as e:
-                        logger.warning(f"⚠️ Focus Assistant processing failed: {e}")
-                        # Fallback to regular processing
-                        activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
-                else:
-                    # Fallback if raw response fails
-                    activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
-            else:
-                # Fallback if no system prompt
-                activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
-        else:
-            # Regular agent processing
-            activity, confidence = await agent_llm_processor.classify_activity(extracted_text, agent_id)
+            default_yaml = os.path.join(os.path.dirname(__file__), '..', 'agent', 'config', 'activity-tracking-agent.yaml')
+            generic_agent = GenericAgent.from_yaml(default_yaml)
+            logger.warning("No current agent selected, using default YAML")
+
+        # Prepare inputs based on YAML-declared sensors
+        inputs: Dict[str, Any] = {}
+        if 'screen' in generic_agent.sensors:
+            inputs['screen'] = {"image": request.image}
+
+        # Execute pipeline
+        activity, confidence, raw = await generic_agent.plan_and_act(inputs)
         
         logger.info(f"🎯 Final result: activity='{activity}', confidence={confidence}")
         
-        # Execute autonomous code (agentic behavior)
-        logger.info("🤖 Executing autonomous code...")
-        autonomous_code = agent_config.get('code', '')
+        # Execute autonomous code if defined in YAML
+        autonomous_code = generic_agent.config.get('code', '')
+        agent_id = generic_agent.agent_id
         if autonomous_code:
-            execute_autonomous_code(autonomous_code, activity, agent_id)
-            logger.info("✅ Autonomous code executed - memory updated")
-        else:
-            logger.warning("⚠️ No autonomous code found in agent config")
+            # Prefer compact JSON payload if raw contains a JSON object
+            activity_for_memory = activity
+            if raw:
+                try:
+                    import re as _re
+                    _m = _re.search(r"\{.*\}", raw, flags=_re.DOTALL)
+                    if _m:
+                        _obj = json.loads(_m.group(0))
+                        # Normalize fields
+                        fl = str(_obj.get('focus_level', 'medium')).lower()
+                        if fl not in ['low', 'medium', 'high']:
+                            fl = 'medium'
+                        try:
+                            ps = float(_obj.get('productivity_score', 0.5))
+                        except Exception:
+                            ps = 0.5
+                        if ps < 0.0:
+                            ps = 0.0
+                        if ps > 1.0:
+                            ps = 1.0
+                        cat = str(_obj.get('category', 'neutral')).lower()
+                        cat_map = {'productive': 'PRODUCTIVE', 'neutral': 'NEUTRAL', 'distraction': 'DISTRACTION'}
+                        cat_norm = cat_map.get(cat, 'NEUTRAL')
+                        suggestion = str(_obj.get('suggestion', ''))
+                        activity_short = str(_obj.get('activity', ''))
+                        _clean = {
+                            'focus_level': fl,
+                            'productivity_score': round(ps, 2),
+                            'category': cat_norm,
+                            'suggestion': suggestion,
+                            'activity': activity_short,
+                        }
+                        activity_for_memory = json.dumps(_clean, separators=(',', ':'))
+                except Exception:
+                    pass
+            execute_autonomous_code(autonomous_code, activity_for_memory, agent_id)
         
         # Calculate processing time
         processing_time = asyncio.get_event_loop().time() - start_time
@@ -465,34 +344,129 @@ async def select_agent(request: AgentSelectionRequest):
         "agent_name": available_agents[agent_id]['name']
     }
 
-@app.get("/api/focus/summary")
+@app.get("/api/focus/summary") 
 async def get_focus_summary():
-    """Focus-specific metrics"""
+    """Return focus session summary for Focus Assistant using persisted memory."""
     if not agent_manager:
         raise HTTPException(status_code=503, detail="Agent manager not initialized")
-    
-    current_agent = agent_manager.get_current_agent()
+
     current_agent_info = agent_manager.get_current_agent_info()
-    
-    if not current_agent_info or 'focus-assistant' not in current_agent_info.get('id', ''):
-        return {
-            "message": "Focus assistant not active",
-            "active_agent": current_agent_info.get('name', 'Unknown') if current_agent_info else None
-        }
-    
-    # Get focus metrics from the focus assistant agent
-    if hasattr(current_agent, 'get_focus_summary'):
-        focus_summary = current_agent.get_focus_summary()
-        return {
-            "message": "Focus summary retrieved",
-            "summary": focus_summary,
-            "agent": current_agent_info.get('name', 'Focus Assistant')
-        }
+    if not current_agent_info:
+        return {"message": "No agent selected"}
+
+    agent_id = current_agent_info.get('id', 'vygil-focus-assistant')
+    agent_name = current_agent_info.get('name', 'Focus Assistant')
+
+    # Only summarize for Focus Assistant
+    if 'focus-assistant' not in agent_id:
+        return {"message": "Focus assistant not active", "active_agent": agent_name}
+
+    # Load loop interval from YAML for time estimates
+    try:
+        config_file = current_agent_info.get('config_file')
+        cfg = ConfigLoader.load_config(config_file) if config_file else {}
+        loop_interval = int(cfg.get('agent', {}).get('loop_interval', 60))
+    except Exception:
+        loop_interval = 60
+
+    # Read persisted focus memory and compute summary
+    memory_text = get_memory(agent_id)
+    if not memory_text:
+        return {"message": "No focus data yet", "agent": agent_name}
+
+    lines = [ln.strip() for ln in memory_text.split('\n') if ln.strip()]
+
+    # Parse lines (compact, one line per event):
+    # [12:34 PM] Focus: high | Score: 0.85 | PRODUCTIVE | Coding
+    import re
+    focus_levels = []
+    categories = []
+    scores = []
+    activities = []
+
+    # Example line:
+    # [01:05 AM] Focus: medium | Score: 0.50 | NEUTRAL | ACTIVITY: Coding and debugging
+    pattern = re.compile(r"Focus:\s*(high|medium|low)\s*\|\s*Score:\s*([0-9]+\.?[0-9]*)\s*\|\s*([A-Z]+)\s*\|\s*(.*)$")
+
+    for ln in lines:
+        m = pattern.search(ln)
+        if not m:
+            continue
+        level = m.group(1)
+        try:
+            score = float(m.group(2))
+        except ValueError:
+            score = 0.0
+        category = m.group(3)
+        activity_text = m.group(4).strip()
+
+        focus_levels.append(level)
+        scores.append(score)
+        categories.append(category)
+        activities.append(activity_text)
+
+    if not scores:
+        return {"message": "No focus data yet", "agent": agent_name}
+
+    # Compute metrics with exponential moving average (EMA) to react faster but smooth noise
+    if scores:
+        alpha = 0.3  # smoothing factor
+        ema = scores[0]
+        for s in scores[1:]:
+            ema = alpha * s + (1 - alpha) * ema
+        avg_productivity = ema
     else:
-        return {
-            "message": "Focus summary not available",
-            "active_agent": current_agent_info.get('name', 'Unknown')
-        }
+        avg_productivity = 0.0
+
+    # Focus sessions: detect consecutive runs of medium/high (true sessions)
+    focus_sessions = 0
+    in_session = False
+    for lvl in focus_levels:
+        if lvl in ['medium', 'high']:
+            if not in_session:
+                focus_sessions += 1
+                in_session = True
+        else:
+            in_session = False
+
+    # Distractions: count DISTRACTION category, with heuristic fallback by activity text
+    distraction_keywords = ['instagram', 'facebook', 'twitter', 'tiktok', 'reddit', 'youtube', 'netflix']
+    distractions = 0
+    for cat, act in zip(categories, activities):
+        if cat == 'DISTRACTION':
+            distractions += 1
+            continue
+        act_lower = act.lower()
+        if any(k in act_lower for k in distraction_keywords):
+            distractions += 1
+
+    # Total focus time approximation
+    focus_entries = sum(1 for lvl in focus_levels if lvl in ['medium', 'high'])
+    total_focus_time = focus_entries * loop_interval
+
+    # Simple AI insight based on productivity
+    if avg_productivity >= 0.75:
+        suggestion = "Great focus! Keep it up."
+    elif avg_productivity >= 0.5:
+        suggestion = "Solid progress. Consider a short stretch break."
+    elif avg_productivity >= 0.3:
+        suggestion = "Attention drifting. Close distractions and refocus."
+    else:
+        suggestion = "Low focus detected. Take a 5-min reset, then resume."
+
+    summary = {
+        "productivity_score": avg_productivity,
+        "focus_sessions": focus_sessions,
+        "distractions": distractions,
+        "total_focus_time": total_focus_time,
+        "current_suggestion": suggestion
+    }
+
+    return {
+        "message": "Focus summary retrieved",
+        "summary": summary,
+        "agent": agent_name
+    }
 
 # Serve static frontend files (for production)
 if os.path.exists("../frontend/dist"):

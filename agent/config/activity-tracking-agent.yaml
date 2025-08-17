@@ -8,6 +8,7 @@ agent:
   loop_interval: 20  # seconds between activity captures
   max_retries: 3
   timeout: 10  # seconds for each operation
+  sensors: ["screen"]
   
 instructions:
   system_prompt: |
@@ -72,6 +73,20 @@ mcp_server:
     get_recent_activities:
       name: "get_recent_activities"
       description: "Retrieves last N activities for context"
+
+pipeline:
+  - tool_selection
+  - execute_tools
+  - analyze_results
+
+prompts:
+  tool_selection: |
+    You are deciding the first tool to run for the agent.
+    Inputs:
+    - Screen present: {has_screen}
+    Available tools:
+    {available_tools}
+    Return JSON: {"tool": "name", "reason": "why"}
 
 llm:
   provider: "openai"  # options: "openai", "anthropic", "fireworks"

@@ -1,0 +1,51 @@
+# Vygil Audio Analyzer Agent (stub)
+
+agent:
+  name: "Vygil Audio Analyzer"
+  id: "vygil-audio-analyzer"
+  description: "Analyzes microphone audio for transcription and simple classification"
+  version: "0.1.0"
+  loop_interval: 30
+  sensors: ["audio"]
+
+llm:
+  provider: "openai"
+  model: "gpt-4o-mini"
+  temperature: 0.2
+  max_tokens: 120
+  timeout: 10
+
+mcp_server:
+  command: "node"
+  args: ["../mcp-server/dist/vygil-mcp-server.js"]
+  protocol: "stdio"
+  timeout: 30
+  tools:
+    transcribe_audio:
+      name: "transcribe_audio"
+      description: "Transcribes microphone audio input to text"
+    detect_profanity:
+      name: "detect_profanity"
+      description: "Flags profanity or sensitive words in transcripts"
+
+pipeline:
+  - tool_selection
+  - execute_tools
+  - analyze_results
+
+prompts:
+  tool_selection: |
+    Decide which audio tool to run first.
+    Inputs:
+    - Audio present: true
+    Available tools:
+    {available_tools}
+    Return JSON: {"tool": "name", "reason": "why"}
+
+# Autonomous code – noop by default for stub
+code: |
+  # No-op: append activity_result to memory
+  memory = get_memory()
+  updated = (memory + "\n" + activity_result) if memory else activity_result
+  update_memory(updated)
+
