@@ -108,21 +108,21 @@ activity_logs: List[ActivityLog] = []
 async def startup_event():
     """Initialize components on startup"""
     global config, llm_processor, agent_manager
-    
+
     try:
         # Initialize Agent Manager first
         agent_manager = AgentManager()
-        
+
         # Load configuration
         config_path = os.path.join(os.path.dirname(__file__), '..', 'agent', 'config', 'activity-tracking-agent.yaml')
         config = ConfigLoader.load_config(config_path)
-        
+
         # Initialize LLM processor
         llm_processor = LLMProcessor(config)
-        
+
         logger.info("Vygil API server started successfully")
         logger.info(f"Discovered {len(agent_manager.get_available_agents())} agents")
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize server: {e}")
         raise
@@ -467,6 +467,136 @@ async def get_focus_summary():
         "summary": summary,
         "agent": agent_name
     }
+
+
+# ============= VIDEO INTELLIGENCE (MINIMAL) =============
+
+TWELVELABS_API_KEY = os.getenv("TWELVELABS_API_KEY")
+TWELVELABS_INDEX_ID = os.getenv("TWELVELABS_INDEX_ID")
+TWELVELABS_BASE_URL = os.getenv("TWELVELABS_API_BASE_URL", "https://api.twelvelabs.io/v1.3")
+
+
+@app.get("/api/videos")
+async def list_videos():
+    """List videos from TwelveLabs index and add local URLs"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{TWELVELABS_BASE_URL}/indexes/{TWELVELABS_INDEX_ID}/videos?page_limit=50",
+                headers={"x-api-key": TWELVELABS_API_KEY}
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Add local video URLs based on filename
+            videos = data.get("data", [])
+            for video in videos:
+                filename = video.get("system_metadata", {}).get("filename")
+                if filename:
+                    # Add local URL that will be served by FastAPI
+                    video["local_url"] = f"http://localhost:8000/videos/{filename}"
+
+            return {"success": True, "data": videos}
+    except Exception as e:
+        logger.error(f"Failed to fetch videos: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/videos/{video_id}")
+async def get_video(video_id: str):
+    """Get single video details"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{TWELVELABS_BASE_URL}/indexes/{TWELVELABS_INDEX_ID}/videos/{video_id}",
+                headers={"x-api-key": TWELVELABS_API_KEY}
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/videos/{video_id}/products")
+async def get_products(video_id: str, force: bool = False):
+    """Get products (analyze if needed)"""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Check if already analyzed (unless force=true)
+            if not force:
+                video_response = await client.get(
+                    f"{TWELVELABS_BASE_URL}/indexes/{TWELVELABS_INDEX_ID}/videos/{video_id}",
+                    headers={"x-api-key": TWELVELABS_API_KEY}
+                )
+                if video_response.status_code == 200:
+                    video_data = video_response.json()
+                    if video_data.get("user_metadata", {}).get("products"):
+                        products = video_data["user_metadata"]["products"]
+                        # Handle if stored as string
+                        if isinstance(products, str):
+                            import json
+                            products = json.loads(products)
+                        logger.info(f"Returning cached products for video {video_id}")
+                        return {"success": True, "products": products, "cached": True}
+
+            # Need to analyze
+            logger.info(f"Analyzing video {video_id}...")
+
+            prompt = """List all products shown in the video:
+
+- timeline: [start_seconds, end_seconds]
+- brand: brand name
+- product_name: full name
+- location: [x%, y%, width%, height%] as percentages (0-100)
+- price: price if visible or mentioned
+- description: what's shown/said about it
+
+Return ONLY a JSON array, no markdown:
+[{"timeline": [0, 10], "brand": "Nike", "product_name": "Air Max", "location": [20, 30, 15, 15], "price": "$120", "description": "Running shoe"}]"""
+
+            analyze_response = await client.post(
+                f"{TWELVELABS_BASE_URL}/analyze",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+                json={"video_id": video_id, "prompt": prompt, "stream": False},
+                timeout=120.0
+            )
+            analyze_response.raise_for_status()
+
+            analyze_data = analyze_response.json()
+            products_json = analyze_data.get("data", "[]")
+
+            # Parse products
+            import json
+            products = json.loads(products_json)
+
+            logger.info(f"Analysis complete: {len(products)} products found")
+
+            # Save to metadata
+            await client.put(
+                f"{TWELVELABS_BASE_URL}/indexes/{TWELVELABS_INDEX_ID}/videos/{video_id}",
+                headers={"x-api-key": TWELVELABS_API_KEY},
+                json={
+                    "user_metadata": {
+                        "products": products,
+                        "analyzed_at": datetime.now().isoformat()
+                    }
+                }
+            )
+
+            return {"success": True, "products": products, "cached": False}
+
+    except Exception as e:
+        logger.error(f"Product analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Serve local video files
+videos_path = os.path.join(os.path.dirname(__file__), '..', 'videos')
+if os.path.exists(videos_path):
+    app.mount("/videos", StaticFiles(directory=videos_path), name="videos")
+    logger.info(f"Serving videos from: {videos_path}")
+
 
 # Serve static frontend files (for production)
 if os.path.exists("../frontend/dist"):

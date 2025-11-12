@@ -11,6 +11,36 @@ dist/
 sofar.txt
 update_v1.txt
 
+# Analysis and implementation docs
+*_ANALYSIS.md
+*_PLAN.md
+MINIMAL_*.md
+SHOPPABLE_*.md
+VIDEO_INTELLIGENCE_*.md
+article_v1.md
+deploy.md
+
+# Test files
+test-video.html
+
+# Issues and screenshots
+issues/
+*.png
+*.jpg
+*.jpeg
+
+# Video files
+videos/
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# API keys and credentials
+*.key
+*_KEY
+*API_KEY*
+
 # System files
 .DS_Store
 

@@ -3,6 +3,7 @@ import ActivityTracker from './components/ActivityTracker'
 import AgentSelector from './components/AgentSelector'
 import SystemDashboard from './components/SystemDashboard'
 import Header from './components/Header'
+import VideoIntelligence from './components/VideoIntelligence'
 import './App.css'
 
 function App() {
@@ -15,29 +16,33 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-ghost via-primary-whisper to-primary-neutral">
+    <div className={`${currentAgent === 'vygil-video-intelligence' ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-gradient-to-br from-primary-ghost via-primary-whisper to-primary-neutral`}>
       {/* Fixed Header */}
       <Header status={monitoringStatus} />
-      
+
       {/* Main Content */}
-      <div className="mx-auto px-4 md:px-6 lg:px-8 pt-20 pb-16">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <div className={`mx-auto px-4 md:px-6 lg:px-8 pt-20 ${currentAgent === 'vygil-video-intelligence' ? 'h-[calc(100vh-5rem)] overflow-hidden' : 'pb-16'}`}>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
           {/* Left Sidebar - Agent & System Info */}
           <div className="lg:col-span-1 space-y-6">
-            <AgentSelector 
+            <AgentSelector
               currentAgent={currentAgent}
               onAgentChange={handleAgentChange}
               isActive={monitoringStatus === 'monitoring'}
             />
             <SystemDashboard />
           </div>
-          
-          {/* Main Activity Tracker */}
+
+          {/* Main Content - Switch based on agent */}
           <div className="lg:col-span-3">
-            <ActivityTracker 
-              onStatusChange={setMonitoringStatus}
-              currentAgent={currentAgent}
-            />
+            {currentAgent === 'vygil-video-intelligence' ? (
+              <VideoIntelligence />
+            ) : (
+              <ActivityTracker
+                onStatusChange={setMonitoringStatus}
+                currentAgent={currentAgent}
+              />
+            )}
           </div>
         </div>
       </div>

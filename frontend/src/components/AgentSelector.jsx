@@ -29,8 +29,16 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
       }
       const data = await response.json()
       console.log('Received agent data:', data)
-      
-      setAvailableAgents(data.agents)
+
+      // Add Video Intelligence agent to the list (not in backend YAML configs)
+      const videoIntelligenceAgent = {
+        id: 'vygil-video-intelligence',
+        name: 'Video Intelligence',
+        description: 'AI-powered product detection in videos',
+        features: ['Product Detection', 'Timeline Analysis', 'E-commerce Links']
+      }
+
+      setAvailableAgents([...data.agents, videoIntelligenceAgent])
       setError(null) // Clear any previous errors
     } catch (err) {
       console.error('Error fetching agents:', err)
@@ -48,6 +56,12 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
           name: 'Focus Assistant',
           description: 'Helps maintain focus by detecting distractions',
           features: ['Focus Tracking', 'Distraction Alerts', 'Productivity Analysis']
+        },
+        {
+          id: 'vygil-video-intelligence',
+          name: 'Video Intelligence',
+          description: 'AI-powered product detection in videos',
+          features: ['Product Detection', 'Timeline Analysis', 'E-commerce Links']
         }
       ])
     }
@@ -62,6 +76,15 @@ const AgentSelector = ({ currentAgent, onAgentChange, isActive }) => {
     setError(null)
 
     try {
+      // Video Intelligence is frontend-only, no backend agent to select
+      if (agentId === 'vygil-video-intelligence') {
+        setSelectedAgent(agentId)
+        onAgentChange && onAgentChange(agentId)
+        setIsLoading(false)
+        return
+      }
+
+      // For other agents, call backend API
       const response = await fetch('/api/agents/select', {
         method: 'POST',
         headers: {
